@@ -76,6 +76,10 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
     )
     adj_idx = columns.index("adjustflag")
     for row in rows:
+        if len(row) != len(columns):
+            raise ValueError(
+                f"{table}: row has {len(row)} fields, expected {len(columns)}"
+            )
         if row[adj_idx] != adjustflag:
             raise ValueError(
                 f"row adjustflag {row[adj_idx]!r} != param {adjustflag!r}"

@@ -13,13 +13,14 @@
 import argparse
 import os
 import sys
+from datetime import date, timedelta
 
 import baostock as bs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import (SCHEMA_PATH, backfill_etf_info, backfill_stock_info,
                 init_db, insert_kline)
-from transform import market_of
+from transform import kline_table, market_of
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,8 +29,22 @@ VALID_ADJUST = ("2", "3")
 
 
 def _kline_fields(kind, freq):
+    kline_table(kind, freq)  # 校验 kind/freq，非法值抛 ValueError
     from db import _TABLE_COLS
     return ",".join(_TABLE_COLS[(kind, freq)])
+
+
+def resolve_date_range(start, end, years=5):
+    """解析抓取日期窗口。
+
+    文档未定义采集默认回溯窗口；此处约定为：未指定时默认回溯 N 年
+    （默认 5 年）。end 缺省取今天，start 缺省取 end 往前 N 年。
+    """
+    if end is None:
+        end = date.today().isoformat()
+    if start is None:
+        start = (date.fromisoformat(end) - timedelta(days=365 * years)).isoformat()
+    return start, end
 
 
 def fetch_basic(conn, code):
@@ -117,12 +132,14 @@ def main(argv=None):
     adjusts = [a.strip() for a in args.adjust.split(",") if a.strip()]
     codes = [c.strip() for c in args.codes.split(",") if c.strip()]
 
+    start, end = resolve_date_range(args.start, args.end)
+
     conn = init_db(args.db)
     lg = bs.login()
     if lg.error_code != "0":
         raise RuntimeError(f"baostock login failed: {lg.error_code} {lg.error_msg}")
     try:
-        run_fetch(conn, codes, freqs, adjusts, args.start, args.end)
+        run_fetch(conn, codes, freqs, adjusts, start, end)
     finally:
         bs.logout()
     conn.close()

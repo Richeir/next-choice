@@ -29,9 +29,11 @@ python fetch_data.py --db ../data/market.db \
 | `--codes` | 是 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915` |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3` | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
-| `--start` | 否 | — | 起始日期 `YYYY-MM-DD` |
-| `--end` | 否 | — | 结束日期 `YYYY-MM-DD` |
+| `--start` | 否 | 回溯 5 年 | 起始日期 `YYYY-MM-DD`，缺省为 `--end` 往前 5 年 |
+| `--end` | 否 | 今天 | 结束日期 `YYYY-MM-DD`，缺省为当天 |
 
+> **默认回溯窗口**：文档未定义采集默认回溯天数，脚本约定未指定 `--start` 时回溯 **5 年**（`end` 缺省为今天）。
+>
 > 注意：ETF 的 K 线数据范围自 **2026-01-05** 起；股票自 1990-12-19 起。
 > 复权因子表 `adjust_factor` 当前由脚本按需写入（可扩展 `--factors`）。
 

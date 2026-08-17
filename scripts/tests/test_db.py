@@ -67,6 +67,18 @@ def test_insert_kline_wrong_table(conn):
         db.insert_kline(conn, kind="bogus", freq="daily", adjustflag="3", rows=[])
 
 
+def test_insert_kline_wrong_row_length(conn):
+    # 行字段数少于列集应显式报错，避免 zip 静默截断
+    with pytest.raises(ValueError):
+        db.insert_kline(
+            conn,
+            kind="stock",
+            freq="daily",
+            adjustflag="3",
+            rows=[["2024-01-02", "sh.600000", "6.63"]],
+        )
+
+
 def test_stock_backfill(conn):
     # 先插基础信息 + 两行不复权日 K（含 peTTM）
     conn.execute(

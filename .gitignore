@@ -12,6 +12,16 @@
 .DS_Store
 *.pem
 
+# python / data collection
+scripts/.venv/
+__pycache__/
+*.pyc
+
+# sqlite database files
+data/
+*.db
+*.sqlite
+
 # debug
 npm-debug.log*
 yarn-debug.log*

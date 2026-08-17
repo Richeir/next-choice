@@ -11,6 +11,11 @@
 - **分页**：`page`（从 1 起）+ `pageSize`（默认 20，最大 100），响应带总数
 - **错误**：统一 `{ statusCode, message, error }` 结构，遵循 Nest.js 默认异常格式
 - **MVP0 无鉴权**：本地工具型应用，后续如需登录再引入
+- **字段命名**：API 响应统一使用 **camelCase**（如 `lastTradeDate`、`isWorthBuying`），数据库列名使用 snake_case（如 `last_trade_date`），由后端 Service/Repository 层负责转换
+- **字段来源约定**：
+  - 基础行情字段（收盘价、涨跌幅、PE 等）可由脚本从 BaoStock 回填
+  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale` / `nav`（ETF）等由 **LLM 分析时填充**，未填充前为 `null`
+  - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [DB_DESIGN.md](DB_DESIGN.md) §6
 
 ## 2. 首页统计
 
@@ -30,6 +35,8 @@
 ```
 
 字段对应 issue：股票数量 / ETF 数量 / 已分析数量 / 已分析次数。
+
+> **实现说明**：后端读取数据库实时统计（见 [DB_DESIGN.md](DB_DESIGN.md) §8 首页统计 SQL），并将结果**缓存**（如内存缓存 + 定时失效，例如每 10 分钟刷新），避免每次请求都全表 COUNT。缓存命中时直接返回，数据变动后按失效策略刷新。
 
 ## 3. 股票 / ETF 列表
 
@@ -55,11 +62,14 @@
 - `code` / `codeName`：代码 / 名称
 - `lastClose`：最新收盘价
 - `lastPctChg`：最新涨跌幅
-- `industry`：行业
-- `rating`：**最新买入评级**（来自分析表，按评级档位排序）
+- `lastAmount`：最新成交额（由 LLM 填充）
+- `industry`：行业（由 LLM 填充）
+- `peTtm`：市盈率
+- `pb`：市净率（由 LLM 填充）
+- `rating`：**最新买入评级**（按评级档位排序，`rating` 由 `score` 换算）
 - `score`：最新综合评分
 
-> 评级排序基于每只股票**最新一条**分析记录的 `rating`（见 [DB_DESIGN.md](DB_DESIGN.md) §6）。
+> 评级排序基于每只股票**最新一条**分析记录的 `score` 换算所得 `rating`（见 [DB_DESIGN.md](DB_DESIGN.md) §6）。
 
 **响应**
 
@@ -71,11 +81,16 @@
       "codeName": "浦发银行",
       "market": "SH",
       "industry": "货币金融服务",
+      "fullName": "上海浦东发展银行股份有限公司",
       "lastTradeDate": "2024-01-05",
       "lastClose": 6.62,
       "lastPctChg": -0.30,
       "lastAmount": 180000000,
       "peTtm": 5.2,
+      "pb": 0.6,
+      "totalMarketCap": 2600000000000,
+      "high52w": 8.5,
+      "low52w": 5.8,
       "analysis": {
         "date": "2024-01-06",
         "rating": "A+",
@@ -91,14 +106,46 @@
 ```
 
 > `analysis` 为最新一条分析结果的摘要；未分析过则为 `null`。
+> 其中 `industry` / `lastAmount` / `pb` / `fullName` / `totalMarketCap` / `high52w` / `low52w` 由 LLM 分析时填充，未填充前为 `null`。
 
 ### 3.2 `GET /api/etfs`
 
 与股票列表同构，但为 ETF：
 
-- **Query 参数**：`keyword`、`market`、`sortBy`、`order`、`page`、`pageSize`
-- **排序字段**：`code` / `codeName` / `lastClose` / `lastPctChg` / `rating` / `score`
-- **响应 items 元素**：`code` / `codeName` / `market` / `lastTradeDate` / `lastClose` / `lastPctChg` / `fundScale` / `analysis`
+**Query 参数**：`keyword`、`category`（类别：宽基/行业/主题/策略/跨境/债券）、`manager`（管理人）、`market`、`sortBy`、`order`、`page`、`pageSize`
+
+**排序字段（`sortBy`）**：`code` / `codeName` / `nav`（最新净值，即最后交易日收盘价）/ `lastPctChg` / `fundScale`（规模）/ `rating` / `score`
+
+**响应 items 元素**：
+
+```json
+{
+  "items": [
+    {
+      "code": "sh.510010",
+      "codeName": "沪深300ETF",
+      "market": "SH",
+      "category": "宽基",
+      "manager": "华泰柏瑞",
+      "lastTradeDate": "2024-01-05",
+      "nav": 4.182,
+      "lastPctChg": 0.04,
+      "fundScale": 183200000000,
+      "analysis": {
+        "date": "2024-01-06",
+        "rating": "B+",
+        "score": 45,
+        "signal": "HOLD"
+      }
+    }
+  ],
+  "total": 512,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+> `nav`（净值）= 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由 LLM 分析时填充，未填充前为 `null`。
 
 ## 4. 详情页
 
@@ -114,22 +161,28 @@
 {
   "code": "sh.600000",
   "codeName": "浦发银行",
+  "fullName": "上海浦东发展银行股份有限公司",
   "market": "SH",
   "type": "1",
   "ipoDate": "1999-11-10",
   "outDate": null,
   "status": "1",
   "industry": "货币金融服务",
-  "industryClassification": "证监会行业分类",
   "lastTradeDate": "2024-01-05",
   "lastClose": 6.62,
   "lastPctChg": -0.30,
   "lastAmount": 180000000,
-  "peTtm": 5.2
+  "peTtm": 5.2,
+  "pb": 0.6,
+  "totalMarketCap": 2600000000000,
+  "high52w": 8.5,
+  "low52w": 5.8
 }
 ```
 
 不存在返回 `404`。
+
+> `fullName` / `industry` / `lastAmount` / `pb` / `totalMarketCap` / `high52w` / `low52w` 由 LLM 分析时填充，未填充前为 `null`。
 
 ### 4.2 `GET /api/etfs/:code`
 
@@ -138,18 +191,22 @@
 ```json
 {
   "code": "sh.510010",
-  "codeName": "XX ETF",
+  "codeName": "沪深300ETF",
   "market": "SH",
   "type": "5",
   "ipoDate": "...",
   "outDate": null,
   "status": "1",
+  "category": "宽基",
+  "manager": "华泰柏瑞",
   "lastTradeDate": "...",
-  "lastClose": 1.829,
-  "lastPctChg": 1.27,
-  "fundScale": 530000000.0
+  "nav": 4.182,
+  "lastPctChg": 0.04,
+  "fundScale": 183200000000.0
 }
 ```
+
+> `nav` = 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由 LLM 分析时填充，未填充前为 `null`。
 
 ## 5. 分析相关
 

@@ -1,15 +1,15 @@
 # 前端页面设计
 
-本文档描述 React 前端各页面设计，基于 `doc/frontend/images/` 下的设计图编写。API 调用约定见 [api-design.md](../api-design.md)。
+本文档描述 React 前端各页面设计，基于 `doc/frontend/` 下的设计图编写。API 调用约定见 [api-design.md](../api-design.md)。
 
 设计图参考：
 
 | 图片 | 页面 |
 |------|------|
-| [index.webp](images/index.webp) | 首页 |
-| [stocks.webp](images/stocks.webp) | 股票列表 |
-| [etf.webp](images/etf.webp) | ETF 列表 |
-| [detail.webp](images/detail.webp) | 详情页（股票） |
+| [index.jpg](index.jpg) | 首页 |
+| [stocks_list.jpg](stocks_list.jpg) | 股票列表 |
+| [etf_list.jpg](etf_list.jpg) | ETF 列表 |
+| [detail.jpg](detail.jpg) | 详情页（股票） |
 
 ## 0. 全局布局
 
@@ -29,7 +29,7 @@
 
 ---
 
-## 1. 首页 `/`（index.webp）
+## 1. 首页 `/`（index.jpg）
 
 ### 结构
 - **面包屑标签**："— 系统数据"（蓝色小字）
@@ -54,7 +54,7 @@
 
 ---
 
-## 2. 股票列表 `/stocks`（stocks.webp）
+## 2. 股票列表 `/stocks`（stocks_list.jpg）
 
 ### 结构
 - **面包屑**："— 系统数据 / 股票"
@@ -69,9 +69,11 @@
 | 市场 | 下拉 | 全部 / SH / SZ |
 | 行业 | 下拉 | 全部 / 各行业 |
 | 状态 | 下拉 | 全部 / 已分析 / 待分析 |
-| 排序 | 下拉 | 代码 / 最新 / 涨跌 / 成交额 / PE |
+| 排序 | 下拉 | 代码 / 最新 / 涨跌 / 成交额 / PE / 评级 |
 
-右侧显示："共 4,832 条"
+> 排序下拉中的“评级”按最新买入评级排序（`rating` 由 `score` 换算，见 [api-design.md](../api-design.md)）；`行业`、`成交额` 等字段由 LLM 分析时填充。
+
+右侧显示：“共 4,832 条”
 
 ### 表格列
 
@@ -95,7 +97,7 @@
 
 ---
 
-## 3. ETF 列表 `/etfs`（etf.webp）
+## 3. ETF 列表 `/etfs`（etf_list.jpg）
 
 ### 结构
 - **面包屑**："— 系统数据 / ETF"
@@ -110,9 +112,11 @@
 | 类别 | 下拉 | 全部 / 宽基 / 行业 / 策略 / 跨境 / 债券 |
 | 市场 | 下拉 | 全部 / SH / SZ |
 | 管理人 | 下拉 | 全部 / 各管理人 |
-| 排序 | 下拉 | 代码 / 最新 NAV / 日涨跌 / 规模 |
+| 排序 | 下拉 | 代码 / 最新 NAV / 日涨跌 / 规模 / 评级 |
 
-右侧显示："共 512 条"
+> NAV = 最后交易日收盘价；`类别` / `管理人` / `规模` 由 LLM 分析时填充。
+
+右侧显示：“共 512 条”
 
 ### 表格列
 
@@ -136,7 +140,7 @@
 
 ---
 
-## 4. 详情页 `/stocks/:code`（detail.webp）
+## 4. 详情页 `/stocks/:code`（detail.jpg）
 
 以贵州茅台（600519）为例。
 

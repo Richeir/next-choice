@@ -27,7 +27,17 @@ LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档�
     "llmAnalysis": {
       "type": "string",
       "description": "详细分析文字（Markdown），保存到分析表的 llm_analysis 列"
-    }
+    },
+    "industry": { "type": "string", "description": "所属行业（股票）" },
+    "lastAmount": { "type": "number", "description": "成交额，单位元（股票）" },
+    "pb": { "type": "number", "description": "市净率（股票）" },
+    "fullName": { "type": "string", "description": "公司全称（股票）" },
+    "totalMarketCap": { "type": "number", "description": "总市值，单位元（股票）" },
+    "high52w": { "type": "number", "description": "52 周最高价（股票）" },
+    "low52w": { "type": "number", "description": "52 周最低价（股票）" },
+    "category": { "type": "string", "description": "ETF 类别（ETF）" },
+    "manager": { "type": "string", "description": "管理人（ETF）" },
+    "fundScale": { "type": "number", "description": "基金规模（ETF）" }
   }
 }
 ```
@@ -41,6 +51,24 @@ LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档�
 | `holdDays` | `hold_days` |
 | `reason` | `note`（评分理由摘要） |
 | `llmAnalysis` | `llm_analysis` |
+
+### 额外回填（info 表，供列表/详情展示）
+
+除分析表外，LLM 在分析时**同时回填**基础信息表，用于列表页展示与排序（BaoStock 无法直接获取这些字段）：
+
+| JSON 字段 | 目标列 | 适用标的 |
+|-----------|--------|----------|
+| `industry` | `stock_info.industry` | 股票 |
+| `lastAmount` | `stock_info.last_amount`（成交额） | 股票 |
+| `pb` | `stock_info.pb`（市净率） | 股票 |
+| `fullName` | `stock_info.full_name`（公司全称） | 股票 |
+| `totalMarketCap` | `stock_info.total_market_cap`（总市值） | 股票 |
+| `high52w` / `low52w` | `stock_info.high_52w` / `stock_info.low_52w` | 股票 |
+| `category` | `etf_info.category`（类别） | ETF |
+| `manager` | `etf_info.manager`（管理人） | ETF |
+| `fundScale` | `etf_info.fund_scale`（规模） | ETF |
+
+这些字段为**可空**，未分析（未填充）前为 `NULL`。
 
 ## 3. 提示词模板
 

@@ -19,6 +19,9 @@ python fetch_data.py --db ../data/market.db \
     --codes sh.600000,sz.159915 \
     --freq daily,weekly,monthly --adjust 2,3 \
     --start 2024-01-01 --end 2024-01-31
+
+# 仅拉取当日全部 ETF 列表并写入 etf_info（不带 K 线，每 100 只批量落库并打印进度）
+python fetch_data.py --update-etf-list [--list-date 2026-08-17]
 ```
 
 参数说明：
@@ -26,7 +29,9 @@ python fetch_data.py --db ../data/market.db \
 | 参数 | 必填 | 默认 | 说明 |
 |------|------|------|------|
 | `--db` | 否 | `../data/market.db` | SQLite 数据库路径 |
-| `--codes` | 是 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915` |
+| `--codes` | 二选一 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915`；与 `--update-etf-list` 互斥 |
+| `--update-etf-list` | 二选一 | — | 拉取当日全部 ETF 基础信息写入 `etf_info` 表 |
+| `--list-date` | 否 | 今天 | `--update-etf-list` 使用的日期 `YYYY-MM-DD` |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3` | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
 | `--start` | 否 | 回溯 5 年 | 起始日期 `YYYY-MM-DD`，缺省为 `--end` 往前 5 年 |

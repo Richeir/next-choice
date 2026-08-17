@@ -1,0 +1,8 @@
+{
+  "model": "gpt-4o",
+  "promptTemplate": "你是一位资深 A 股分析师。请基于以下证券信息与历史 K 线数据，\n判断该标的当前是否值得买入，并给出大致持有天数预测。\n\n## 标的类型\n{{securityType}}（股票 / ETF）\n\n## 证券基础信息\n{{basicInfo}}\n\n## 历史 K 线摘要\n{{klineSummary}}\n\n## 最近 20 日技术指标\n{{technicalIndicators}}\n\n## 输出要求\n请严格输出一个 JSON 对象，不要包含任何多余文字或 Markdown 代码块。\nJSON 字段必须满足以下 schema：\n- rating：9 档评级之一：S+, S, A+, A, B+, B, C+, C, D\n- isWorthBuying：布尔值，是否值得买入\n- holdDays：整数，建议持有天数（0 表示不建议买入持有，范围 0~365）\n- reason：一句话的买入判断摘要\n- llmAnalysis：详细分析文字，可用 Markdown，说明趋势、量能、风险与买卖建议\n\n直接输出 JSON 即可。",
+  "timeoutMs": 60000,
+  "maxRetries": 2,
+  "klineLimit": 120,
+  "temperature": 0.2
+}

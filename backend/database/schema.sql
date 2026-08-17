@@ -211,3 +211,11 @@ CREATE TABLE IF NOT EXISTS adjust_factor (
     backAdjustFactor REAL,
     PRIMARY KEY (code, date)
 );
+
+-- 分析配置（LLM 提示词等）的 DB 覆盖（llm-analysis.md §4 方案 A）。
+-- 默认值在 backend/src/config/analysis.config.json；此处仅存 DB 覆盖项。
+CREATE TABLE IF NOT EXISTS analysis_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,      -- JSON 字符串
+    updated_at TEXT
+);

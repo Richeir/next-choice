@@ -14,7 +14,7 @@ backend/src/
 ├── database/
 │   ├── database.module.ts      # SQLite 连接（better-sqlite3）
 │   ├── database.service.ts     # 连接与查询封装
-│   └── schema.sql              # 建表 SQL（与 DB_DESIGN.md 一致）
+│   └── schema.sql              # 建表 SQL（与 db-design.md 一致）
 ├── modules/
 │   ├── securities/             # 证券信息模块
 │   │   ├── securities.module.ts

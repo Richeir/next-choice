@@ -15,7 +15,7 @@
 - **字段来源约定**：
   - 基础行情字段（收盘价、涨跌幅、PE 等）可由脚本从 BaoStock 回填
   - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale` / `nav`（ETF）等由 **LLM 分析时填充**，未填充前为 `null`
-  - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [DB_DESIGN.md](DB_DESIGN.md) §6
+  - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [db-design.md](db-design.md) §6
 
 ## 2. 首页统计
 
@@ -36,7 +36,7 @@
 
 字段对应 issue：股票数量 / ETF 数量 / 已分析数量 / 已分析次数。
 
-> **实现说明**：后端读取数据库实时统计（见 [DB_DESIGN.md](DB_DESIGN.md) §8 首页统计 SQL），并将结果**缓存**（如内存缓存 + 定时失效，例如每 10 分钟刷新），避免每次请求都全表 COUNT。缓存命中时直接返回，数据变动后按失效策略刷新。
+> **实现说明**：后端读取数据库实时统计（见 [db-design.md](db-design.md) §8 首页统计 SQL），并将结果**缓存**（如内存缓存 + 定时失效，例如每 10 分钟刷新），避免每次请求都全表 COUNT。缓存命中时直接返回，数据变动后按失效策略刷新。
 
 ## 3. 股票 / ETF 列表
 
@@ -69,7 +69,7 @@
 - `rating`：**最新买入评级**（按评级档位排序，`rating` 由 `score` 换算）
 - `score`：最新综合评分
 
-> 评级排序基于每只股票**最新一条**分析记录的 `score` 换算所得 `rating`（见 [DB_DESIGN.md](DB_DESIGN.md) §6）。
+> 评级排序基于每只股票**最新一条**分析记录的 `score` 换算所得 `rating`（见 [db-design.md](db-design.md) §6）。
 
 **响应**
 

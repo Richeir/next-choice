@@ -13,8 +13,8 @@
 - **MVP0 无鉴权**：本地工具型应用，后续如需登录再引入
 - **字段命名**：API 响应统一使用 **camelCase**（如 `lastTradeDate`、`isWorthBuying`），数据库列名使用 snake_case（如 `last_trade_date`），由后端 Service/Repository 层负责转换
 - **字段来源约定**：
-  - 基础行情字段（收盘价、涨跌幅、PE 等）可由脚本从 BaoStock 回填
-  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale` / `nav`（ETF）等由 **LLM 分析时填充**，未填充前为 `null`
+  - 基础行情字段（收盘价、涨跌幅、PE、ETF 的 `nav` 等）可由脚本从 BaoStock 回填
+  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale`（ETF）等由 **LLM 分析时填充**，未填充前为 `null`
   - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [db-design.md](db-design.md) §6
 
 ## 2. 首页统计
@@ -35,6 +35,8 @@
 ```
 
 字段对应 issue：股票数量 / ETF 数量 / 已分析数量 / 已分析次数。
+
+> **覆盖率**：设计图首页展示的"分析覆盖率百分比"（如 90.3%）由前端计算：`股票覆盖率 = analyzedCnt / stockCnt`、`ETF 覆盖率 = analyzedCnt / etfCnt`。
 
 > **实现说明**：后端读取数据库实时统计（见 [db-design.md](db-design.md) §8 首页统计 SQL），并将结果**缓存**（如内存缓存 + 定时失效，例如每 10 分钟刷新），避免每次请求都全表 COUNT。缓存命中时直接返回，数据变动后按失效策略刷新。
 
@@ -283,7 +285,7 @@
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `frequency` | string | `daily`(默认) / `weekly` / `monthly` |
-| `adjust` | string | `qfq`(前复权，默认) / `raw`(不复权) |
+| `adjust` | string | `qfq`(前复权，默认) / `raw`(不复权)。对应 db-design 的 `adjustflag`：`qfq`↔`'2'`、`raw`↔`'3'` |
 | `limit` | number | 返回条数，默认 250 |
 | `start` / `end` | string | 日期区间（可选） |
 

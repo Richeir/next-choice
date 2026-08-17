@@ -206,8 +206,8 @@
 
 - 面包屑："ETF / 宽基 / 510300"
 - 头部描述含管理人、类别
-- 关键指标行：规模、管理人、类别、最新 NAV、日涨跌、52 周高、52 周低
-- 分析结果卡片结构相同
+- 关键指标行（字段映射）：规模 `fundScale`、管理人 `manager`、类别 `category`、最新 NAV `nav`、日涨跌 `lastPctChg`、52 周高 `high52w`、52 周低 `low52w`
+- 分析结果卡片结构相同（数据来源：`GET /api/etfs/:code` + `GET /api/etfs/:code/analysis`）
 
 ---
 

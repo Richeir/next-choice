@@ -10,7 +10,7 @@
 | [tech-stack.md](tech-stack.md) | 技术栈选型与版本 | 新 |
 | [api-design.md](api-design.md) | 自研 Nest.js 后端 API 设计 | 新 |
 | [db-design.md](db-design.md) | SQLite 数据库设计（11 张表） | 已有 |
-| [api.md](api.md) | BaoStock 数据源 API 参考 | 已有 |
+| [baostock-api.md](baostock-api.md) | BaoStock 数据源 API 参考 | 已有 |
 | [llm-analysis.md](llm-analysis.md) | LLM 分析设计：提示词模板 + 输出 schema | 新 |
 | [backend/modules.md](backend/modules.md) | Nest.js 模块划分与数据访问层 | 新 |
 | [frontend/pages.md](frontend/pages.md) | React 前端页面设计 | 新 |

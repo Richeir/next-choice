@@ -9,6 +9,7 @@
 # production
 /build
 frontend/dist/
+frontend/.vite/
 
 # misc
 .DS_Store
@@ -18,6 +19,15 @@ frontend/dist/
 scripts/.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+coverage.xml
+*.egg-info
 
 # sqlite database files
 data/

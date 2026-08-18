@@ -21,6 +21,11 @@
     python fetch_data.py --fetch-etf-kline --freq daily,weekly,monthly \
         --start 2026-01-05
 
+    # 根据 stock_info 表全量抓取 A 股的日/周/月 K 线（先跑 --update-stock-list
+    # 填充 stock_info；默认复权 2,3，--start 控制起始日）
+    python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
+        --start 2026-01-05
+
 流程：login -> 逐个 code 写基础信息 -> 逐个 (code, freq, adjust) 拉 K 线入库
       -> 用不复权日 K 回填行情字段 -> logout。
 """
@@ -251,6 +256,33 @@ def update_etf_list(conn, date_str):
     return n_ok, n_fail
 
 
+def fetch_stock_kline(conn, freqs, adjusts, start, end):
+    """从 stock_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
+
+    依赖 stock_info 表已由 `--update-stock-list` 填充；本命令不重新查询列表接口。
+    单只失败只记 warning 不中断整体（~5100 只 A 股，单只失败不应阻塞）。
+    结束后用不复权日 K 回填 stock_info 行情字段。
+    返回 (n_ok, n_fail) 供调用方打印汇总。
+    """
+    codes = [r["code"] for r in conn.execute("SELECT code FROM stock_info")]
+    n_ok = n_fail = 0
+    total = len(codes)
+    for idx, code in enumerate(codes, 1):
+        try:
+            for freq in freqs:
+                for adj in adjusts:
+                    fetch_kline(conn, "stock", code, freq, adj, start, end)
+            n_ok += 1
+            conn.commit()  # 每只抓完即提交：中断不丢已处理数据
+        except (RuntimeError, ValueError) as e:
+            log.warning("fetch_kline %s failed: %s", code, e)
+            n_fail += 1
+        log.info("stock kline %d/%d code=%s ok=%d fail=%d", idx, total, code, n_ok, n_fail)
+        print(f"[stock-kline] {idx}/{total} {code} ok={n_ok} fail={n_fail}", flush=True)
+    backfill_stock_info(conn)
+    return n_ok, n_fail
+
+
 def fetch_etf_kline(conn, freqs, adjusts, start, end):
     """从 etf_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
 
@@ -279,7 +311,7 @@ def fetch_etf_kline(conn, freqs, adjusts, start, end):
 
 
 def build_parser():
-    """构造 CLI 参数解析器。--codes 与 --update-etf-list 二选一。"""
+    """构造 CLI 参数解析器。--codes 与列表/K 线全量抓取选项互斥。"""
     parser = argparse.ArgumentParser(description="BaoStock 数据采集")
     parser.add_argument("--db", default=os.path.join(ROOT, "data", "market.db"))
     group = parser.add_mutually_exclusive_group(required=True)
@@ -291,6 +323,8 @@ def build_parser():
                        help="拉取当日全部 A 股基础信息并写入 stock_info 表")
     group.add_argument("--fetch-etf-kline", action="store_true",
                        help="根据 etf_info 表全量抓取 ETF 的日/周/月 K 线")
+    group.add_argument("--fetch-stock-kline", action="store_true",
+                       help="根据 stock_info 表全量抓取 A 股的日/周/月 K 线")
     parser.add_argument("--freq", default="daily",
                         help="逗号分隔频率: daily,weekly,monthly")
     parser.add_argument("--adjust", default=None,
@@ -319,6 +353,16 @@ def main(argv=None):
             list_date = args.list_date or date.today().isoformat()
             n_ok, n_fail = update_stock_list(conn, list_date)
             print(f"done. db={args.db} stock_list ok={n_ok} fail={n_fail} date={list_date}")
+        elif args.fetch_stock_kline:
+            freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
+            # db-design.md：每张 K 线表同时保存 前复权(2) 与 不复权(3)；
+            # --fetch-stock-kline 默认 2,3，可用 --adjust 覆盖。
+            adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]
+                       if args.adjust else ["2", "3"])
+            start, end = resolve_date_range(args.start, args.end)
+            n_ok, n_fail = fetch_stock_kline(conn, freqs, adjusts, start, end)
+            print(f"done. db={args.db} stock_kline ok={n_ok} fail={n_fail} "
+                  f"freqs={freqs} adjusts={adjusts} start={start} end={end}")
         elif args.fetch_etf_kline:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             # db-design.md：每张 K 线表同时保存 前复权(2) 与 不复权(3)；

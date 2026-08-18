@@ -7,7 +7,7 @@ React 18 + Vite 5 + TypeScript + React Router 6 + Axios + ECharts。
 ## 开发
 
 ```bash
-# 1. 启动后端（默认 http://localhost:3000）
+# 1. 启动后端（默认 http://localhost:3100）
 cd ../backend && npm run start:prod
 
 # 2. 启动前端（http://localhost:5173，/api 自动代理到后端）

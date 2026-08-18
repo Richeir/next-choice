@@ -79,7 +79,7 @@ npm run start:dev      # 开发模式（热重载）
 # 或：npm run build && npm run start:prod
 ```
 
-- 默认监听 `http://localhost:3000`，全局前缀 `/api`
+- 默认监听 `http://localhost:3100`，全局前缀 `/api`
 - 数据库路径：仓库根 `data/market.db`（可用环境变量 `DB_PATH` 覆盖）
 - 端口：`PORT` 环境变量覆盖
 
@@ -91,7 +91,7 @@ npm install
 npm run dev            # http://localhost:5173
 ```
 
-前端 `vite.config.ts` 已将 `/api` 代理到 `http://localhost:3000`，保持默认即可联通后端。
+前端 `vite.config.ts` 已将 `/api` 代理到 `http://localhost:3100`，保持默认即可联通后端。
 
 ## 主要接口（后端）
 

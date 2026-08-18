@@ -11,6 +11,11 @@
   - `doc/`：设计文档（架构、DB、BaoStock API、LLM 分析等）。
 - 默认数据入库路径：`data/market.db`。
 
+## 沟通偏好
+
+- Agent 与用户交流、生成解释、总结、报告、PR 评论等说明性内容时，统一使用**简体中文**。
+- 代码、命令、文件名、API 名称、英文术语、提交信息、代码注释等保留英文原文不动。
+
 ## 提交规范（Conventional Commits / Angular）
 
 提交信息格式：`<type>(<scope>): <subject>`

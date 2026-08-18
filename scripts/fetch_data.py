@@ -268,13 +268,12 @@ def fetch_etf_kline(conn, freqs, adjusts, start, end):
                 for adj in adjusts:
                     fetch_kline(conn, "etf", code, freq, adj, start, end)
             n_ok += 1
+            conn.commit()  # 每只抓完即提交：中断不丢已处理数据
         except (RuntimeError, ValueError) as e:
             log.warning("fetch_kline %s failed: %s", code, e)
             n_fail += 1
-        if idx % 100 == 0 or idx == total:
-            log.info("etf kline progress %d/%d ok=%d fail=%d", idx, total, n_ok, n_fail)
-            conn.commit()  # 分批提交：中断不丢已处理数据
-            print(f"[etf-kline-progress] {idx}/{total} ok={n_ok} fail={n_fail}", flush=True)
+        log.info("etf kline %d/%d code=%s ok=%d fail=%d", idx, total, code, n_ok, n_fail)
+        print(f"[etf-kline] {idx}/{total} {code} ok={n_ok} fail={n_fail}", flush=True)
     backfill_etf_info(conn)
     return n_ok, n_fail
 

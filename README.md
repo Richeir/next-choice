@@ -60,6 +60,9 @@ pip install -r scripts/requirements.txt
 # 拉取 ETF 基础信息（写入 etf_info 表）
 python scripts/fetch_data.py --update-etf-list
 
+# 拉取 A 股基础信息（写入 stock_info 表）
+python scripts/fetch_data.py --update-stock-list
+
 # 拉取若干股票/ETF 的 K 线（默认 5 年窗口、日 K、不复权 + 前复权）
 python scripts/fetch_data.py \
     --db data/market.db \

@@ -22,6 +22,9 @@ python fetch_data.py --db ../data/market.db \
 
 # 仅拉取当日全部 ETF 列表并写入 etf_info（不带 K 线，每 100 只批量落库并打印进度）
 python fetch_data.py --update-etf-list [--list-date 2026-08-17]
+
+# 仅拉取当日全部 A 股列表并写入 stock_info（不带 K 线，每 100 只批量落库并打印进度）
+python fetch_data.py --update-stock-list [--list-date 2026-08-17]
 ```
 
 参数说明：
@@ -29,9 +32,10 @@ python fetch_data.py --update-etf-list [--list-date 2026-08-17]
 | 参数 | 必填 | 默认 | 说明 |
 |------|------|------|------|
 | `--db` | 否 | `../data/market.db` | SQLite 数据库路径 |
-| `--codes` | 二选一 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915`；与 `--update-etf-list` 互斥 |
-| `--update-etf-list` | 二选一 | — | 拉取当日全部 ETF 基础信息写入 `etf_info` 表 |
-| `--list-date` | 否 | 今天 | `--update-etf-list` 使用的日期 `YYYY-MM-DD` |
+| `--codes` | 二选一 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915`；与 `--update-etf-list` / `--update-stock-list` 互斥 |
+| `--update-etf-list` | 三选一 | — | 拉取当日全部 ETF 基础信息写入 `etf_info` 表 |
+| `--update-stock-list` | 三选一 | — | 拉取当日全部 A 股基础信息写入 `stock_info` 表 |
+| `--list-date` | 否 | 今天 | `--update-etf-list` / `--update-stock-list` 使用的日期 `YYYY-MM-DD` |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3` | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
 | `--start` | 否 | 回溯 5 年 | 起始日期 `YYYY-MM-DD`，缺省为 `--end` 往前 5 年 |
@@ -51,6 +55,11 @@ python fetch_data.py --update-etf-list [--list-date 2026-08-17]
 4. 用不复权日 K 回填 `last_trade_date / last_close / last_pct_chg`
 5. `logout()` 登出
 
+> `--update-etf-list` / `--update-stock-list` 走旁路：仅拉列表接口
+> （`query_daily_history_k_ETF` / `query_daily_history_k_AStock`）拿全部代码，
+> 再逐只 `query_stock_basic` 补齐基础信息写入 `etf_info` / `stock_info`，
+> 不拉 K 线。
+
 ## 测试
 
 ```bash
@@ -65,4 +74,7 @@ python -m pytest tests -q
 
 - `tests/test_transform.py`：数据转换 / 市场推断 / 表名映射
 - `tests/test_db.py`：建表（11 张）、幂等写入、行情回填（临时库）
+- `tests/test_fetch.py`：`fetch_data` 纯逻辑（K 线字段、日期窗口）
+- `tests/test_fetch_etf_list.py`：`update_etf_list` + CLI 解析（mock BaoStock）
+- `tests/test_fetch_stock_list.py`：`update_stock_list` + CLI 解析（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证

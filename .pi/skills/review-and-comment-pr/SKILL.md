@@ -15,27 +15,49 @@ description: Use after pushing or creating any PR in this repository when no tra
 
 ## 步骤
 
-### 0. 确保有对应的 issue（在 push / 创建 PR 之前）
+### 0. 准备 PR body 草稿并确保有关联 issue（在 push / 创建 PR 之前）
 
-#### 0a. 检查是否已经有关联 issue
+本步骤产出两个变量：`PR_BODY`（PR body 草稿）和 `ISSUE_NUMBER`（关联的 issue 号，可能由 0d 创建）。
 
-从 PR body 草稿或本地备注里搜索 GitHub 关键词：`Closes #N` / `Fixes #N` / `Resolves #N`。
+**唯一合法顺序**：0a/0b 准备并检查 → 0c/0d 建 issue（必要时）→ 0e 把 `Closes #N` 追加到 `PR_BODY`。禁止 Agent 凭直觉先写 PR body 再回头补 issue。
+
+#### 0a. 准备 `PR_BODY`
+
+按以下优先级确定 `PR_BODY` 来源：
+
+1. **用户提供的本地文件**：`$PR_BODY_FILE` 环境变量，或仓库根目录的 `.git/PR_BODY.md`、`PR_BODY.md`。
+2. **Agent 自行构造**：基于 0c 的 commit + diff 摘要生成（参考 0d 的"摘要"段规则）。
 
 ```bash
-PR_BODY="<本次 PR 的草稿 body>"
+PR_BODY=""
+if [ -n "$PR_BODY_FILE" ] && [ -f "$PR_BODY_FILE" ]; then
+  PR_BODY=$(cat "$PR_BODY_FILE")
+elif [ -f .git/PR_BODY.md ]; then
+  PR_BODY=$(cat .git/PR_BODY.md)
+elif [ -f PR_BODY.md ]; then
+  PR_BODY=$(cat PR_BODY.md)
+fi
+# 上述文件都没有时，PR_BODY 留空，Agent 在 0d 之前补一段基于 commit + diff 的摘要。
+```
 
+> ⚠️ 不允许把 `<占位符>` 字面量塞进 `PR_BODY`；留空比放占位符安全。
+
+#### 0b. 检查 `PR_BODY` 是否已含关联关键词
+
+```bash
 if echo "$PR_BODY" | grep -qE "(Closes|Fixes|Resolves)\s+#[0-9]+"; then
   ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oE "(Closes|Fixes|Resolves)\s+#[0-9]+" | head -1 | grep -oE "[0-9]+")
   echo "PR body already references issue #$ISSUE_NUMBER, skipping issue creation."
+  SKIP_ISSUE_CREATION=1
 else
   echo "No issue linked. Will create one."
 fi
 ```
 
-- 如果命中 → 提取 `ISSUE_NUMBER`，跳过 0b/0c，直接进入 step 1。
-- 如果没命中 → 进入 0b。
+- 命中 → `SKIP_ISSUE_CREATION=1`，跳过 0c/0d，保留 `PR_BODY` 原样，进入 Step 1。
+- 未命中 → 进入 0c。
 
-#### 0b. 准备 issue 标题与 body（基于当前 PR 内容）
+#### 0c. 生成 issue 标题与 body（基于当前 PR 内容）
 
 **先看真实改动，再写 issue**——不允许只根据 commit message 凭空生成。
 
@@ -43,64 +65,72 @@ fi
 BASE="origin/main"
 HEAD="$(git rev-parse --abbrev-ref HEAD)"
 
-# 改动概览（必须真实读取）
-git diff --stat "$BASE...$HEAD"
-
-# Commit 列表（标题 + body）
-git log "$BASE..$HEAD" --pretty=format:"%s%n%b%n---"
+git diff --stat "$BASE...$HEAD"                       # 改动概览（必须真实读取）
+git log "$BASE..$HEAD" --pretty=format:"%s%n%b%n---"  # Commit 列表
 ```
 
-生成规则：
+**标题生成规则**（规则与命令示例必须能互相印证）：
 
-- **title（必须精炼，≤ 50 字符，祈使句式，模仿 Conventional Commits 风格）**：
-  - 优先从 `git log` 的第一条 commit subject 提炼。
-  - 如果多个 commit 主题分散，取最能代表整体意图的一个；必要时手动合并短语，例如 `add foo feature`、`fix bar bug`、`refactor: extract baz helper`。
-  - 去掉结尾的句号、表情、与本任务无关的后缀。
-
-- **body（三段式总结当前 PR 的内容）**：
-  1. **摘要**：一句话说明这个 PR 要做什么（基于 commits + diff 整体提炼）。
-  2. **改动概览**：`git diff --stat` 输出原文。
-  3. **Commits**：`git log` 每条一行（含 hash 短值便于追溯）。
-
-#### 0c. 创建 issue
+- ≤ 50 字符，祈使句式。
+- **必须去掉 Conventional Commits 的 type/scope 前缀**（如 `docs(skills):`、`feat:`、`fix(api):`）——issue 标题不需要提交元数据。
+- 多个 commit 主题分散时取最能代表整体意图的一个；必要时手动合并短语，例如 `add foo feature`、`fix bar bug`、`refactor: extract baz helper`。
+- 去掉结尾的句号、表情、与本任务无关的后缀。
+- 长度超过 50 字符时，在最近的空格处截断并加 `...`（避免切到单词中间）。
 
 ```bash
-# 把上面的内容写到临时文件
-cat > /tmp/issue_body.md <<'EOF'
+# 从第一条 commit subject 提取标题：先 sed 去掉 type/scope 前缀，再 awk 在边界处截断
+RAW_SUBJECT=$(git log "$BASE..$HEAD" --pretty=format:"%s" | head -1)
+ISSUE_TITLE=$(echo "$RAW_SUBJECT" \
+  | sed -E 's/^[a-z]+(\([^)]+\))?:\s*//' \
+  | awk '{ if (length($0) > 50) print substr($0, 1, 47) "..."; else print $0 }')
+```
+
+**Body（三段式总结当前 PR 的内容）**：
+
+1. **摘要**：一句话说明这个 PR 要做什么（基于 commits + diff 整体提炼）。
+2. **改动概览**：`git diff --stat` 输出原文。
+3. **Commits**：`git log` 每条一行（含 hash 短值便于追溯）。
+
+#### 0d. 创建 issue
+
+```bash
+cat > /tmp/issue_body.md <<EOF
 ## 摘要
-<一句话说明>
+$(echo "$RAW_SUBJECT" | sed -E 's/^[a-z]+(\([^)]+\))?:\s*//')
 
 ## 改动概览
-<git diff --stat 输出>
+\`\`\`
+$(git diff --stat "$BASE...$HEAD")
+\`\`\`
 
 ## Commits
-<git log 输出>
+$(git log "$BASE..$HEAD" --pretty=format:"- %h %s")
 
 ---
 本 issue 由 Agent 在创建 PR 前自动生成。
 EOF
 
-ISSUE_URL=$(gh issue create \
-  --title "<精炼标题>" \
-  --body-file /tmp/issue_body.md)
-
+ISSUE_URL=$(gh issue create --title "$ISSUE_TITLE" --body-file /tmp/issue_body.md)
 ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
 echo "Created issue #$ISSUE_NUMBER: $ISSUE_URL"
 ```
 
-### 1. 创建 PR（body 追加 `Closes #N`）
-
-把 `Closes #<ISSUE_NUMBER>` 追加到 PR body 末尾：
+#### 0e. 把 `Closes #<ISSUE_NUMBER>` 追加到 `PR_BODY` 末尾
 
 ```bash
-FULL_BODY="$PR_BODY
+PR_BODY="${PR_BODY}
 
 Closes #$ISSUE_NUMBER"
-
-gh pr create --title "<title>" --body "$FULL_BODY"
 ```
 
-> 如果 0a 已命中 `Fixes #N` 等已有关键词，**不要**改写或重复追加，沿用原 body 即可。
+> 如果 0b 已命中 `Closes/Fixes/Resolves #N` → **不要**改写或重复追加，沿用原 `PR_BODY` 即可。
+
+### 1. 创建 PR
+
+```bash
+gh pr create --title "<title>" --body "$PR_BODY" --base main
+# base 不是 main 时：gh pr create --base <实际 base>
+```
 
 ### 2. 确认 PR 号与审查范围
 
@@ -160,7 +190,8 @@ gh pr view <PR_NUMBER> --comments   # 应能看到刚发布的 comment
 - Review 必须基于真实读取的代码，不臆测。
 - 结论需给明确 verdict，不得含糊。
 - 若发现 critical/important 问题，在 PR 里明确指出，由实现方决定是否修复后再合入。
-- **issue 标题必须精炼（≤ 50 字符）**，祈使句式，模仿 Conventional Commits 风格；禁止照搬多行 commit subject。
+- `PR_BODY` 必须由 Step 0a 显式提供（本地文件 / Agent 构造），禁止把 `<占位符>` 字面量塞进去。
+- **issue 标题必须精炼（≤ 50 字符）**，祈使句式，**必须去掉 Conventional Commits 的 type/scope 前缀**（如 `docs(skills):`）；禁止照搬多行 commit subject。
 - **issue body 必须先看 `git diff` 再写**——不允许脱离 diff 内容凭空生成摘要。
 - PR body 已经包含 `Closes/Fixes/Resolves #N` 时，**不要**重复创建 issue，也**不要**改写现有关键词。
 - 如果 base 分支不是 `origin/main`，先把 `BASE` 调整为实际 base，再跑 diff / log。

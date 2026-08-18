@@ -21,7 +21,7 @@ npm run start:dev
 npm run build && npm run start:prod
 ```
 
-服务默认监听 `http://localhost:3000`，全局前缀 `/api`，默认连接仓库根 `data/market.db`（可用 `DB_PATH` 覆盖，`PORT` 覆盖端口）。
+服务默认监听 `http://localhost:3100`，全局前缀 `/api`，默认连接仓库根 `data/market.db`（可用 `DB_PATH` 覆盖，`PORT` 覆盖端口）。
 
 ## 测试
 

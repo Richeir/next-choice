@@ -8,7 +8,7 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: false }),
   );
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3100;
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(`Nest.js backend listening on http://localhost:${port}/api`);

@@ -39,3 +39,9 @@
 - Review 采用只读审查：可用 `git diff <base>..<head>`、`git show`、`git log` 检查，不得改动工作区/分支。
 - 结论需分级：`Critical`（必须修复）/ `Important`（应当修复）/ `Minor`（可选），并给出**Ready to merge? Yes/No/With fixes** 的明确结论。
 - 若 Agent 自身缺少执行该流程的上下文，先读本文件引用的 skill 再执行。
+
+## 合并策略
+
+- **PR 一律不允许 Agent 自动合并（auto-merge）**。Agent 完成 review 并给出结论后，由仓库维护者人工决定是否合并。
+- Agent **不得**调用 `gh pr merge`（包括 `--auto`、`--squash`、`--rebase`、`--merge` 等任何形式），也不得开启仓库级的 auto-merge 设置。
+- 若 review 结论为 "Ready to merge: Yes"，Agent 只汇报结论与 PR 链接；不要等待或催促合并。

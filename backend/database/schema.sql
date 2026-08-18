@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS stock_info (
     full_name       TEXT,
     total_market_cap REAL,
     high_52w        REAL,
-    low_52w         REAL
+    low_52w         REAL,
+    last_fetch_date TEXT              -- 全量抓取完成日（脚本标记，断点续传用）
 );
 
 CREATE TABLE IF NOT EXISTS etf_info (
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_trade_date TEXT,
     last_close      REAL,
     last_pct_chg    REAL,
-    fund_scale      REAL                -- 由 LLM 填充
+    fund_scale      REAL,               -- 由 LLM 填充
+    last_fetch_date TEXT                -- 全量抓取完成日（脚本标记，断点续传用）
 );
 
 -- ============ K 线数据 ============

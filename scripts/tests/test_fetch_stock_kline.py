@@ -4,6 +4,7 @@
 与 --update-stock-list 不同，本命令不重新查询列表接口，只依赖 stock_info 表。
 """
 import logging
+import socket
 
 import pytest
 
@@ -159,6 +160,115 @@ class TestFetchStockKline:
         assert info["last_trade_date"] == "2026-01-05"
         assert info["last_close"] == 10.5
         assert info["last_pct_chg"] == 2.34
+
+
+    def test_skips_fetched_today_and_resumes(self, conn, monkeypatch):
+        # 断点续传：上次跑三档成功并标记今天的股票，本次应被跳过
+        codes = ["sh.600000", "sz.000001"]
+        _seed_stock_info(conn, codes)
+
+        calls = []
+
+        def _fake(code="", fields="", start_date="", end_date="",
+                  frequency="", adjustflag=""):
+            calls.append((code, frequency, adjustflag))
+            return _kline_rs(code, frequency, adjustflag, start_date)
+
+        monkeypatch.setattr(fetch_data.bs, "query_history_k_data_plus", _fake)
+        freqs = ["daily", "weekly", "monthly"]
+        adjusts = ["2", "3"]
+        today = "2026-08-18"
+
+        # 第一次：两只都抓并标记今天
+        n_ok, n_fail = fetch_data.fetch_stock_kline(
+            conn, freqs, adjusts, "2026-01-05", "2026-12-31", today=today)
+        assert (n_ok, n_fail) == (2, 0)
+        assert len(calls) == 2 * 3 * 2
+        for c in codes:
+            assert conn.execute(
+                "SELECT last_fetch_date FROM stock_info WHERE code=?", (c,)
+            ).fetchone()["last_fetch_date"] == today
+
+        # 第二次：全部被跳过，不再发任何请求
+        calls.clear()
+        n_ok, n_fail = fetch_data.fetch_stock_kline(
+            conn, freqs, adjusts, "2026-01-05", "2026-12-31", today=today)
+        assert (n_ok, n_fail) == (0, 0)
+        assert calls == []
+
+    def test_skips_only_fully_fetched_today(self, conn, monkeypatch):
+        # 只有今天已标记的才跳过；昨天标记的仍要重抓
+        _seed_stock_info(conn, ["sh.600000", "sz.000001"])
+        conn.execute(
+            "UPDATE stock_info SET last_fetch_date=? WHERE code=?",
+            ("2026-08-18", "sh.600000"))
+        conn.commit()
+
+        calls = []
+
+        def _fake(code="", fields="", **kw):
+            calls.append(code)
+            return _kline_rs(code, "d", "3", "2026-01-05")
+
+        monkeypatch.setattr(fetch_data.bs, "query_history_k_data_plus", _fake)
+        n_ok, n_fail = fetch_data.fetch_stock_kline(
+            conn, ["daily"], ["3"], "2026-01-05", "2026-12-31",
+            today="2026-08-18")
+        assert (n_ok, n_fail) == (1, 0)
+        assert calls == ["sz.000001"]  # 只重抓昨天未标记的
+
+    def test_force_reignores_fetched_today(self, conn, monkeypatch):
+        _seed_stock_info(conn, ["sh.600000"])
+        conn.execute(
+            "UPDATE stock_info SET last_fetch_date='2026-08-18' WHERE code='sh.600000'")
+        conn.commit()
+
+        calls = []
+
+        def _fake(code="", fields="", **kw):
+            calls.append(code)
+            return _kline_rs(code, "d", "3", "2026-01-05")
+
+        monkeypatch.setattr(fetch_data.bs, "query_history_k_data_plus", _fake)
+        # force=True 忽略今天标记，强制重抓
+        n_ok, n_fail = fetch_data.fetch_stock_kline(
+            conn, ["daily"], ["3"], "2026-01-05", "2026-12-31",
+            force=True, today="2026-08-18")
+        assert (n_ok, n_fail) == (1, 0)
+        assert calls == ["sh.600000"]
+
+    def test_single_freq_does_not_mark_today(self, conn, monkeypatch):
+        # 只跑单档（非三档全集）不应标记 last_fetch_date
+        _seed_stock_info(conn, ["sh.600000"])
+
+        def _fake(code="", fields="", **kw):
+            return _kline_rs(code, "d", "3", "2026-01-05")
+
+        monkeypatch.setattr(fetch_data.bs, "query_history_k_data_plus", _fake)
+        fetch_data.fetch_stock_kline(
+            conn, ["daily"], ["3"], "2026-01-05", "2026-12-31",
+            today="2026-08-18")
+        assert conn.execute(
+            "SELECT last_fetch_date FROM stock_info WHERE code='sh.600000'"
+        ).fetchone()["last_fetch_date"] is None
+
+    def test_socket_timeout_fails_and_continues(self, conn, monkeypatch, caplog):
+        # 超时（socket.timeout）应被当作单只失败记 fail，继续处理其余股票
+        _seed_stock_info(conn, ["sh.600000", "sz.000001"])
+
+        def _fake(code="", fields="", start_date="", end_date="",
+                  frequency="", adjustflag=""):
+            if code == "sh.600000":
+                raise socket.timeout("timed out")
+            return _kline_rs(code, frequency, adjustflag, start_date)
+
+        monkeypatch.setattr(fetch_data.bs, "query_history_k_data_plus", _fake)
+        with caplog.at_level(logging.WARNING):
+            n_ok, n_fail = fetch_data.fetch_stock_kline(
+                conn, ["daily"], ["3"], "2026-01-05", "2026-12-31",
+                today="2026-08-18")
+        assert (n_ok, n_fail) == (1, 1)
+        assert any("sh.600000" in r.getMessage() for r in caplog.records)
 
 
 class TestBuildParser:

@@ -147,3 +147,42 @@ def test_etf_backfill(conn):
         "SELECT last_trade_date, last_close, last_pct_chg FROM etf_info WHERE code='sh.510010'"
     ).fetchone()
     assert tuple(row) == ("2024-01-03", 1.83, 0.5)
+
+
+def test_schema_has_last_fetch_date(conn):
+    for t in ["stock_info", "etf_info"]:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
+        assert "last_fetch_date" in cols
+
+
+def test_migrate_adds_last_fetch_date_to_old_table(tmp_path):
+    # 旧库（无 last_fetch_date 列）经 _migrate 应补齐该列
+    conn = sqlite3.connect(str(tmp_path / "old.db"))
+    conn.execute(
+        "CREATE TABLE stock_info (code TEXT PRIMARY KEY, code_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE etf_info (code TEXT PRIMARY KEY, code_name TEXT)"
+    )
+    conn.commit()
+    db._migrate(conn)
+    for t in ["stock_info", "etf_info"]:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
+        assert "last_fetch_date" in cols
+    conn.close()
+
+
+def test_mark_fetched_and_fetched_today(conn):
+    conn.execute(
+        "INSERT INTO stock_info (code, code_name, type, market) VALUES "
+        "('sh.600000','浦发银行','1','SH')"
+    )
+    conn.execute(
+        "INSERT INTO stock_info (code, code_name, type, market) VALUES "
+        "('sz.000001','平安银行','1','SZ')"
+    )
+    conn.commit()
+    assert db.fetched_today(conn, "stock", "2026-08-18") == set()
+    db.mark_fetched(conn, "stock", "sh.600000", "2026-08-18")
+    assert db.fetched_today(conn, "stock", "2026-08-18") == {"sh.600000"}
+    assert db.fetched_today(conn, "stock", "2026-08-19") == set()

@@ -32,6 +32,7 @@
 import argparse
 import logging
 import os
+import socket
 import sys
 from datetime import date, timedelta
 
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import (SCHEMA_PATH, backfill_etf_info, backfill_stock_info,
-                init_db, insert_kline)
+                fetched_today, init_db, insert_kline, mark_fetched)
 from transform import kline_table, market_of
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -256,56 +257,68 @@ def update_etf_list(conn, date_str):
     return n_ok, n_fail
 
 
-def fetch_stock_kline(conn, freqs, adjusts, start, end):
-    """从 stock_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
+def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, today):
+    """全量 K 线抓取通用主循环（股票/ETF 共用）。
 
-    依赖 stock_info 表已由 `--update-stock-list` 填充；本命令不重新查询列表接口。
-    单只失败只记 warning 不中断整体（~5100 只 A 股，单只失败不应阻塞）。
-    结束后用不复权日 K 回填 stock_info 行情字段。
+    从 {kind}_info 表读全部 code，逐个抓日/周/月 × 复权 K 线。
+    - 断点续传：`force=False` 时跳过 last_fetch_date==today 的证券；
+    - 标记完成：本次请求覆盖全部三档（daily+weekly+monthly）且该证券所有组合
+      都成功时，才把 last_fetch_date 记为 today（满足“日/周/月都更新完才标记”）。
+    单只失败记 warning 不中断整体；每只抓完即提交。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
-    codes = [r["code"] for r in conn.execute("SELECT code FROM stock_info")]
-    n_ok = n_fail = 0
+    today = today or date.today().isoformat()
+    fullset = set(freqs) == {"daily", "weekly", "monthly"}
+    codes = [r["code"] for r in conn.execute(f"SELECT code FROM {table}")]
+    done = set() if force else fetched_today(conn, kind, today)
+    n_ok = n_fail = n_skip = 0
     total = len(codes)
     for idx, code in enumerate(codes, 1):
+        if code in done:
+            n_skip += 1
+            log.info("%s kline %d/%d code=%s skipped (fetched today)", kind, idx, total, code)
+            print(f"[{kind}-kline] {idx}/{total} {code} skip ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+            continue
+        success = True
         try:
             for freq in freqs:
                 for adj in adjusts:
-                    fetch_kline(conn, "stock", code, freq, adj, start, end)
+                    fetch_kline(conn, kind, code, freq, adj, start, end)
             n_ok += 1
-            conn.commit()  # 每只抓完即提交：中断不丢已处理数据
-        except (RuntimeError, ValueError) as e:
+        except (RuntimeError, ValueError, socket.timeout) as e:
             log.warning("fetch_kline %s failed: %s", code, e)
             n_fail += 1
-        log.info("stock kline %d/%d code=%s ok=%d fail=%d", idx, total, code, n_ok, n_fail)
-        print(f"[stock-kline] {idx}/{total} {code} ok={n_ok} fail={n_fail}", flush=True)
+            success = False
+        if success and fullset:
+            mark_fetched(conn, kind, code, today)
+        conn.commit()  # 每只抓完即提交：中断不丢已处理数据
+        log.info("%s kline %d/%d code=%s ok=%d fail=%d", kind, idx, total, code, n_ok, n_fail)
+        print(f"[{kind}-kline] {idx}/{total} {code} ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+    return n_ok, n_fail
+
+
+def fetch_stock_kline(conn, freqs, adjusts, start, end, force=False, today=None):
+    """从 stock_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
+
+    依赖 stock_info 表已由 `--update-stock-list` 填充；本命令不重新查询列表接口。
+    支持断点续传（跳过 last_fetch_date==today 的股票）与请求超时失败继续。
+    结束后用不复权日 K 回填 stock_info 行情字段。
+    返回 (n_ok, n_fail) 供调用方打印汇总。
+    """
+    n_ok, n_fail = _kline_fetch_loop(conn, "stock", "stock_info", freqs, adjusts, start, end, force, today)
     backfill_stock_info(conn)
     return n_ok, n_fail
 
 
-def fetch_etf_kline(conn, freqs, adjusts, start, end):
+def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False, today=None):
     """从 etf_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
 
     依赖 etf_info 表已由 `--update-etf-list` 填充；本命令不重新查询列表接口。
-    单只失败只记 warning 不中断整体（~1400 只 ETF，单只失败不应阻塞）。
+    支持断点续传（跳过 last_fetch_date==today 的 ETF）与请求超时失败继续。
     结束后用不复权日 K 回填 etf_info 行情字段。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
-    codes = [r["code"] for r in conn.execute("SELECT code FROM etf_info")]
-    n_ok = n_fail = 0
-    total = len(codes)
-    for idx, code in enumerate(codes, 1):
-        try:
-            for freq in freqs:
-                for adj in adjusts:
-                    fetch_kline(conn, "etf", code, freq, adj, start, end)
-            n_ok += 1
-            conn.commit()  # 每只抓完即提交：中断不丢已处理数据
-        except (RuntimeError, ValueError) as e:
-            log.warning("fetch_kline %s failed: %s", code, e)
-            n_fail += 1
-        log.info("etf kline %d/%d code=%s ok=%d fail=%d", idx, total, code, n_ok, n_fail)
-        print(f"[etf-kline] {idx}/{total} {code} ok={n_ok} fail={n_fail}", flush=True)
+    n_ok, n_fail = _kline_fetch_loop(conn, "etf", "etf_info", freqs, adjusts, start, end, force, today)
     backfill_etf_info(conn)
     return n_ok, n_fail
 
@@ -334,6 +347,10 @@ def build_parser():
     parser.add_argument("--end", default=None, help="结束日期 YYYY-MM-DD")
     parser.add_argument("--list-date", default=None,
                         help="--update-etf-list 使用的日期 YYYY-MM-DD，默认今天")
+    parser.add_argument("--force", action="store_true",
+                       help="忽略 last_fetch_date 标记，强制全量重抓（供换日期窗口等场景）")
+    parser.add_argument("--timeout", type=int, default=30,
+                       help="网络请求超时秒数，0 禁用超时（默认 30）")
     return parser
 
 
@@ -344,6 +361,17 @@ def main(argv=None):
     lg = bs.login()
     if lg.error_code != "0":
         raise RuntimeError(f"baostock login failed: {lg.error_code} {lg.error_msg}")
+    if args.timeout and args.timeout > 0:
+        # baostock 全局 socket 阻塞 recv 无超时是“卡住”的根源；login 后对其设
+        # 超时，超时被 send_msg 捕获转成 error_code 返回，上层抛 RuntimeError
+        # 记 fail 继续，不再无限挂起。超时后会话可能失效，靠重启+断点续传兜底。
+        try:
+            sock = bs.common.context.default_socket
+            if sock is not None:
+                sock.settimeout(args.timeout)
+                log.info("set baostock socket timeout=%ss", args.timeout)
+        except Exception:
+            log.warning("failed to set socket timeout; continuing without it")
     try:
         if args.update_etf_list:
             list_date = args.list_date or date.today().isoformat()
@@ -360,9 +388,11 @@ def main(argv=None):
             adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]
                        if args.adjust else ["2", "3"])
             start, end = resolve_date_range(args.start, args.end)
-            n_ok, n_fail = fetch_stock_kline(conn, freqs, adjusts, start, end)
+            n_ok, n_fail = fetch_stock_kline(conn, freqs, adjusts, start, end,
+                                              force=args.force)
             print(f"done. db={args.db} stock_kline ok={n_ok} fail={n_fail} "
-                  f"freqs={freqs} adjusts={adjusts} start={start} end={end}")
+                  f"freqs={freqs} adjusts={adjusts} start={start} end={end} "
+                  f"force={args.force}")
         elif args.fetch_etf_kline:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             # db-design.md：每张 K 线表同时保存 前复权(2) 与 不复权(3)；
@@ -370,9 +400,11 @@ def main(argv=None):
             adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]
                        if args.adjust else ["2", "3"])
             start, end = resolve_date_range(args.start, args.end)
-            n_ok, n_fail = fetch_etf_kline(conn, freqs, adjusts, start, end)
+            n_ok, n_fail = fetch_etf_kline(conn, freqs, adjusts, start, end,
+                                            force=args.force)
             print(f"done. db={args.db} etf_kline ok={n_ok} fail={n_fail} "
-                  f"freqs={freqs} adjusts={adjusts} start={start} end={end}")
+                  f"freqs={freqs} adjusts={adjusts} start={start} end={end} "
+                  f"force={args.force}")
         else:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             # 指定代码路径保持原缺省：不复权(3)

@@ -25,6 +25,11 @@ python fetch_data.py --update-etf-list [--list-date 2026-08-17]
 
 # 仅拉取当日全部 A 股列表并写入 stock_info（不带 K 线，每 100 只批量落库并打印进度）
 python fetch_data.py --update-stock-list [--list-date 2026-08-17]
+
+# 根据 etf_info 表全量抓取 ETF 的日/周/月 K 线（先跑 --update-etf-list
+# 填充 etf_info；默认复权 2,3（前复权+不复权），--start 控制起始日）
+python fetch_data.py --db ../data/market.db --fetch-etf-kline \
+    --freq daily,weekly,monthly --start 2026-01-05
 ```
 
 参数说明：
@@ -35,9 +40,10 @@ python fetch_data.py --update-stock-list [--list-date 2026-08-17]
 | `--codes` | 二选一 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915`；与 `--update-etf-list` / `--update-stock-list` 互斥 |
 | `--update-etf-list` | 三选一 | — | 拉取当日全部 ETF 基础信息写入 `etf_info` 表 |
 | `--update-stock-list` | 三选一 | — | 拉取当日全部 A 股基础信息写入 `stock_info` 表 |
+| `--fetch-etf-kline` | 三选一 | — | 根据 `etf_info` 表全量抓取 ETF 日/周/月 K 线（需先跑 `--update-etf-list`） |
 | `--list-date` | 否 | 今天 | `--update-etf-list` / `--update-stock-list` 使用的日期 `YYYY-MM-DD` |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
-| `--adjust` | 否 | `3` | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
+| `--adjust` | 否 | `3`（`--codes`）/ `2,3`（`--fetch-etf-kline`） | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
 | `--start` | 否 | 回溯 5 年 | 起始日期 `YYYY-MM-DD`，缺省为 `--end` 往前 5 年 |
 | `--end` | 否 | 今天 | 结束日期 `YYYY-MM-DD`，缺省为当天 |
 
@@ -58,7 +64,10 @@ python fetch_data.py --update-stock-list [--list-date 2026-08-17]
 > `--update-etf-list` / `--update-stock-list` 走旁路：仅拉列表接口
 > （`query_daily_history_k_ETF` / `query_daily_history_k_AStock`）拿全部代码，
 > 再逐只 `query_stock_basic` 补齐基础信息写入 `etf_info` / `stock_info`，
-> 不拉 K 线。
+> 不拉 K 线。`--fetch-etf-kline` 则从 `etf_info` 表读全部 code，逐个抓
+> `daily/weekly/monthly` × 复权组合的 K 线（不重新查询列表接口），默认同时写
+> 前复权(`2`)与不复权(`3`)两档，结束后回填 `etf_info` 行情字段；单只失败
+> 记 warning 不中断整体，每 100 只打印进度。
 
 ## 测试
 
@@ -76,5 +85,6 @@ python -m pytest tests -q
 - `tests/test_db.py`：建表（11 张）、幂等写入、行情回填（临时库）
 - `tests/test_fetch.py`：`fetch_data` 纯逻辑（K 线字段、日期窗口）
 - `tests/test_fetch_etf_list.py`：`update_etf_list` + CLI 解析（mock BaoStock）
+- `tests/test_fetch_etf_kline.py`：`fetch_etf_kline` 全量 K 线抓取 + 默认复权（mock BaoStock）
 - `tests/test_fetch_stock_list.py`：`update_stock_list` + CLI 解析（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证

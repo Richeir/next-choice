@@ -67,6 +67,26 @@ def test_insert_kline_wrong_table(conn):
         db.insert_kline(conn, kind="bogus", freq="daily", adjustflag="3", rows=[])
 
 
+def test_insert_kline_stores_requested_adjustflag(conn):
+    # BaoStock 返回的 adjustflag 列恒为 '3'（与请求参数无关），即使请求前复权('2')；
+    # 落库应记录请求的复权方式，而非信任返回列。
+    db.insert_kline(
+        conn,
+        kind="stock",
+        freq="daily",
+        adjustflag="2",
+        rows=[
+            ["2024-01-02", "sh.600000", "6.63", "6.65", "6.60", "6.60",
+             "6.60", "22066700", "146066303", "3", "0.0752", "1", "-0.3021", "0"],
+        ],
+    )
+    row = conn.execute(
+        "SELECT adjustflag FROM stock_kline_daily "
+        "WHERE code='sh.600000' AND date='2024-01-02'"
+    ).fetchone()
+    assert row["adjustflag"] == "2"
+
+
 def test_insert_kline_wrong_row_length(conn):
     # 行字段数少于列集应显式报错，避免 zip 静默截断
     with pytest.raises(ValueError):

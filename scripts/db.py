@@ -80,10 +80,9 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
             raise ValueError(
                 f"{table}: row has {len(row)} fields, expected {len(columns)}"
             )
-        if row[adj_idx] != adjustflag:
-            raise ValueError(
-                f"row adjustflag {row[adj_idx]!r} != param {adjustflag!r}"
-            )
+        # BaoStock 返回的 adjustflag 列恒为 '3'（与请求参数无关），即使请求前复权('2')；
+        # 落库应记录请求的复权方式，故以请求参数覆盖该列。
+        row[adj_idx] = adjustflag
         vals = [v if c in _RAW_COLS else to_float(v) for c, v in zip(columns, row)]
         conn.execute(sql, vals)
     conn.commit()

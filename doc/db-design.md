@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS stock_info (
     full_name       TEXT,              -- 公司全称，由 LLM 填充
     total_market_cap REAL,             -- 总市值，由 LLM 填充
     high_52w        REAL,              -- 52 周最高价，由 LLM 填充
-    low_52w         REAL               -- 52 周最低价，由 LLM 填充
+    low_52w         REAL,              -- 52 周最低价，由 LLM 填充
+    last_fetch_date TEXT               -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
 );
 ```
 
@@ -113,7 +114,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_trade_date TEXT,               -- 价格对应交易日 YYYY-MM-DD（最后一个有 K 线的交易日），脚本回填
     last_close      REAL,               -- 最后一个交易日收盘价（不复权原始价，即 NAV），脚本回填
     last_pct_chg    REAL,               -- 最后一个交易日涨跌幅（%），脚本回填
-    fund_scale      REAL                -- 基金规模（如净值规模/份额规模，口径以填补时约定为准），由 LLM 循环填补
+    fund_scale      REAL,               -- 基金规模（如净值规模/份额规模，口径以填补时约定为准），由 LLM 循环填补
+    last_fetch_date TEXT                -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
 );
 ```
 

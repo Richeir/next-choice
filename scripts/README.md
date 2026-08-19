@@ -30,6 +30,12 @@ python fetch_data.py --update-stock-list [--list-date 2026-08-17]
 # 填充 etf_info；默认复权 2,3（前复权+不复权），--start 控制起始日）
 python fetch_data.py --db ../data/market.db --fetch-etf-kline \
     --freq daily,weekly,monthly --start 2026-01-05
+
+# 根据 stock_info 表全量抓取 A 股的日/周/月 K 线（先跑 --update-stock-list
+# 填充 stock_info；默认复权 2,3（前复权+不复权），--start 控制起始日；
+# 支持断点续传：三档全部成功才标记 last_fetch_date=今天，重跑跳过已标记的）
+python fetch_data.py --db ../data/market.db --fetch-stock-kline \
+    --freq daily,weekly,monthly --start 2026-01-05
 ```
 
 参数说明：
@@ -40,8 +46,11 @@ python fetch_data.py --db ../data/market.db --fetch-etf-kline \
 | `--codes` | 二选一 | — | 逗号分隔证券代码，如 `sh.600000,sz.159915`；与 `--update-etf-list` / `--update-stock-list` 互斥 |
 | `--update-etf-list` | 三选一 | — | 拉取当日全部 ETF 基础信息写入 `etf_info` 表 |
 | `--update-stock-list` | 三选一 | — | 拉取当日全部 A 股基础信息写入 `stock_info` 表 |
-| `--fetch-etf-kline` | 三选一 | — | 根据 `etf_info` 表全量抓取 ETF 日/周/月 K 线（需先跑 `--update-etf-list`） |
+| `--fetch-etf-kline` | 四选一 | — | 根据 `etf_info` 表全量抓取 ETF 日/周/月 K 线（需先跑 `--update-etf-list`） |
+| `--fetch-stock-kline` | 四选一 | — | 根据 `stock_info` 表全量抓取 A 股日/周/月 K 线（需先跑 `--update-stock-list`） |
 | `--list-date` | 否 | 今天 | `--update-etf-list` / `--update-stock-list` 使用的日期 `YYYY-MM-DD` |
+| `--force` | 否 | `False` | 忽略 `last_fetch_date` 标记，强制全量重抓（供换日期窗口等场景） |
+| `--timeout` | 否 | `30` | 网络请求超时秒数，`0` 禁用超时（请求卡住到点自动失败并继续） |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3`（`--codes`）/ `2,3`（`--fetch-etf-kline`） | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
 | `--start` | 否 | 回溯 5 年 | 起始日期 `YYYY-MM-DD`，缺省为 `--end` 往前 5 年 |
@@ -64,10 +73,22 @@ python fetch_data.py --db ../data/market.db --fetch-etf-kline \
 > `--update-etf-list` / `--update-stock-list` 走旁路：仅拉列表接口
 > （`query_daily_history_k_ETF` / `query_daily_history_k_AStock`）拿全部代码，
 > 再逐只 `query_stock_basic` 补齐基础信息写入 `etf_info` / `stock_info`，
-> 不拉 K 线。`--fetch-etf-kline` 则从 `etf_info` 表读全部 code，逐个抓
-> `daily/weekly/monthly` × 复权组合的 K 线（不重新查询列表接口），默认同时写
-> 前复权(`2`)与不复权(`3`)两档，结束后回填 `etf_info` 行情字段；单只失败
-> 记 warning 不中断整体，每 100 只打印进度。
+> 不拉 K 线。`--fetch-etf-kline` / `--fetch-stock-kline` 则分别从
+> `etf_info` / `stock_info` 表读全部 code，逐个抓 `daily/weekly/monthly` × 复权
+> 组合的 K 线（不重新查询列表接口），默认同时写前复权(`2`)与不复权(`3`)两档，
+> 结束后回填对应行情字段；单只失败记 warning 不中断整体，每只打印进度。
+
+## 断点续传与超时
+
+- **断点续传**：全量抓取支持断点续传。某证券只有当本次请求覆盖**全部三档**
+  （`daily`+`weekly`+`monthly`）且所有 `(freq, adjust)` 组合都成功时，才会把
+  `stock_info` / `etf_info` 的 `last_fetch_date` 标记为**当天**；重跑时
+  `last_fetch_date == 当天` 的证券直接跳过。这样中断后重跑不会重复抓已完成的证券。
+  - 注意：只跑单档（如 `--freq daily`）时**不会**标记，下次跑三档会重抓该档以补全。
+  - 换日期窗口等需要强制重抓的场景，用 `--force`。
+- **请求超时**：默认给 baostock 全局 socket 设 30s 超时，挂起的请求到点自动失败并
+  记 `fail` 继续，不再无限卡住；可用 `--timeout` 调整（`0` 禁用）。超时后会话可能
+  失效导致后续连续失败，此时重启程序配合断点续传即可继续。
 
 ## 测试
 
@@ -86,5 +107,6 @@ python -m pytest tests -q
 - `tests/test_fetch.py`：`fetch_data` 纯逻辑（K 线字段、日期窗口）
 - `tests/test_fetch_etf_list.py`：`update_etf_list` + CLI 解析（mock BaoStock）
 - `tests/test_fetch_etf_kline.py`：`fetch_etf_kline` 全量 K 线抓取 + 默认复权（mock BaoStock）
+- `tests/test_fetch_stock_kline.py`：`fetch_stock_kline` 全量 K 线抓取 + 默认复权（mock BaoStock）
 - `tests/test_fetch_stock_list.py`：`update_stock_list` + CLI 解析（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证

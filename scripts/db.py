@@ -52,7 +52,39 @@ def init_db(db_path, schema_path=None):
     conn.row_factory = sqlite3.Row
     with open(schema_path, "r", encoding="utf-8") as f:
         conn.executescript(f.read())
+    _migrate(conn)
     return conn
+
+
+# 对旧库做增量迁移：schema.sql 用 CREATE TABLE IF NOT EXISTS，不会给已存在的
+# 表补列，故对缺失的列单独 ALTER TABLE ADD COLUMN。
+_INFO_LAST_FETCH = {"stock_info": "last_fetch_date", "etf_info": "last_fetch_date"}
+
+
+def _migrate(conn):
+    """为已存在的 info 表补充新增列（幂等）。"""
+    for table, col in _INFO_LAST_FETCH.items():
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+    conn.commit()
+
+
+def mark_fetched(conn, kind, code, date_str):
+    """把某证券（stock/etf）的 last_fetch_date 标记为指定日期（断点续传）。"""
+    conn.execute(
+        f"UPDATE {kind}_info SET last_fetch_date=? WHERE code=?",
+        (date_str, code),
+    )
+    conn.commit()
+
+
+def fetched_today(conn, kind, date_str):
+    """返回 last_fetch_date 等于指定日期的证券 code 集合（用于跳过已完成的）。"""
+    rows = conn.execute(
+        f"SELECT code FROM {kind}_info WHERE last_fetch_date=?", (date_str,)
+    )
+    return {r["code"] for r in rows}
 
 
 def _kline_columns(kind, freq):

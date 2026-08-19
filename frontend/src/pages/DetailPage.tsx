@@ -28,7 +28,7 @@ type Kind = 'stock' | 'etf';
 
 const SIGNAL_TEXT: Record<string, string> = {
   BUY: '买入',
-  HOLD: '持有',
+  HOLD: '观望',
   SELL: '卖出',
 };
 
@@ -48,7 +48,7 @@ function AnalysisCard({ analysis }: { analysis: AnalysisItem }) {
       <div className="analysis-card">
         <RatingBadge rating={analysis.rating} score={analysis.score} />
         <div className="analysis-body">
-          <h3>综合评分 · 建议：{signalText}</h3>
+          <h3>建议：{signalText}</h3>
           {paragraphs.length > 0 ? (
             paragraphs.map((p, i) => <p key={i}>{p}</p>)
           ) : (

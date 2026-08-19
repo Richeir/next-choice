@@ -46,6 +46,33 @@ export async function getEtfAnalysis(code: string): Promise<Paged<AnalysisItem>>
   return data;
 }
 
+export interface AnalyzeResponse {
+  accepted: boolean;
+  jobId: string;
+}
+
+export type JobStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export interface JobResponse {
+  jobId: string;
+  status: JobStatus;
+  result: unknown;
+  error?: string;
+}
+
+/** 触发对某只标的的异步分析，返回 jobId 供轮询。 */
+export async function analyze(kind: 'stock' | 'etf', code: string): Promise<AnalyzeResponse> {
+  const base = kind === 'stock' ? '/stocks' : '/etfs';
+  const { data } = await http.post<AnalyzeResponse>(`${base}/${code}/analyze`);
+  return data;
+}
+
+/** 查询分析任务状态。 */
+export async function getJob(jobId: string): Promise<JobResponse> {
+  const { data } = await http.get<JobResponse>(`/jobs/${jobId}`);
+  return data;
+}
+
 export async function getKline(
   kind: 'stock' | 'etf',
   code: string,

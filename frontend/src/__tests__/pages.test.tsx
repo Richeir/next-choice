@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import HomePage from '../pages/HomePage';
 import StocksPage from '../pages/StocksPage';
@@ -15,6 +15,8 @@ vi.mock('../api', () => ({
   getStockAnalysis: vi.fn(),
   getEtfAnalysis: vi.fn(),
   getKline: vi.fn(),
+  analyze: vi.fn(),
+  getJob: vi.fn(),
 }));
 
 vi.mock('../components/KlineChart', () => ({
@@ -30,6 +32,8 @@ import {
   getEtfDetail,
   getEtfAnalysis,
   getKline,
+  analyze,
+  getJob,
 } from '../api';
 
 const stats = { stockCnt: 5348, etfCnt: 624, analyzedCnt: 4832, analyzedTimes: 9000 };
@@ -238,6 +242,37 @@ describe('DetailPage', () => {
     expect(screen.getAllByText('4.182').length).toBeGreaterThan(0);
     expect(screen.getByText('暂无分析结果')).toBeInTheDocument();
     expect(screen.getAllByText('华泰柏瑞').length).toBeGreaterThan(0);
+  });
+
+  it('点击触发分析后调用 analyze 并轮询 job，完成后刷新分析卡片', async () => {
+    vi.mocked(getStockDetail).mockResolvedValue(detail);
+    vi.mocked(getStockAnalysis)
+      .mockClear()
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 20 })
+      .mockResolvedValueOnce({ items: [analysis], total: 1, page: 1, pageSize: 20 });
+    vi.mocked(getKline).mockResolvedValue([]);
+    vi.mocked(analyze).mockResolvedValue({ accepted: true, jobId: 'job-1' });
+    vi.mocked(getJob).mockResolvedValue({ jobId: 'job-1', status: 'done', result: null });
+
+    render(
+      <MemoryRouter initialEntries={['/stocks/sh.600519']}>
+        <Routes>
+          <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // 初始无分析结果
+    expect(await screen.findByText('暂无分析结果')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('开始分析'));
+    expect(analyze).toHaveBeenCalledWith('stock', 'sh.600519');
+
+    await waitFor(() => expect(getJob).toHaveBeenCalledWith('job-1'));
+
+    // job 完成后重新拉取分析列表，刷新出分析卡片
+    await waitFor(() => expect(screen.getByText('A+')).toBeInTheDocument());
+    expect(screen.getByText(/综合评分 · 建议/)).toBeInTheDocument();
   });
 
   it('404 时展示错误信息', async () => {

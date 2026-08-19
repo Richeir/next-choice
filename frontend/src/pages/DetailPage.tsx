@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
+  analyze,
   getEtfAnalysis,
   getEtfDetail,
+  getJob,
   getKline,
   getStockAnalysis,
   getStockDetail,
@@ -125,12 +127,16 @@ function KlineSection({ kind, code }: { kind: Kind; code: string }) {
   );
 }
 
+const POLL_INTERVAL_MS = 1500;
+
 export default function DetailPage({ kind }: { kind: Kind }) {
   const { code = '' } = useParams();
   const [detail, setDetail] = useState<StockDetail | EtfDetail | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -149,6 +155,34 @@ export default function DetailPage({ kind }: { kind: Kind }) {
   }, [kind, code]);
 
   useEffect(load, [load]);
+
+  const pollUntilDone = useCallback(
+    async (jobId: string) => {
+      for (;;) {
+        const job = await getJob(jobId);
+        if (job.status === 'done' || job.status === 'failed') return job;
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+    },
+    [],
+  );
+
+  const startAnalysis = useCallback(async () => {
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const { jobId } = await analyze(kind, code);
+      const job = await pollUntilDone(jobId);
+      if (job.status === 'failed') {
+        setAnalyzeError(job.error || '分析失败，请稍后重试');
+      }
+    } catch (e: unknown) {
+      setAnalyzeError(e instanceof Error ? e.message : '分析失败，请稍后重试');
+    } finally {
+      setAnalyzing(false);
+      load();
+    }
+  }, [kind, code, load, pollUntilDone]);
 
   const view = useMemo(() => {
     if (!detail) return null;
@@ -236,6 +270,17 @@ export default function DetailPage({ kind }: { kind: Kind }) {
       ) : (
         <div className="analysis-section-label">暂无分析结果</div>
       )}
+
+      <div className="analyze-row">
+        <button
+          className="btn-analyze"
+          onClick={startAnalysis}
+          disabled={analyzing}
+        >
+          {analyzing ? '分析中…' : '开始分析'}
+        </button>
+        {analyzeError && <span className="analyze-error">{analyzeError}</span>}
+      </div>
 
       <MetricsRow metrics={view.metrics} />
 

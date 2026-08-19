@@ -240,7 +240,10 @@ describe('DetailPage', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText('沪深300ETF')).toBeInTheDocument();
-    expect(screen.getAllByText('4.182').length).toBeGreaterThan(0);
+    // 大号价格按 NAV 精度显示 3 位小数（1.022 不应被截断为 1.02）
+    expect(screen.getAllByText('4.182').length).toBeGreaterThanOrEqual(2);
+    const bigPrice = document.querySelector('.detail-price');
+    expect(bigPrice?.textContent).toBe('4.182');
     expect(screen.getByText('暂无分析结果')).toBeInTheDocument();
     expect(screen.getAllByText('华泰柏瑞').length).toBeGreaterThan(0);
   });

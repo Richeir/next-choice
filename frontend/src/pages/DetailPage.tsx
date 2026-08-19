@@ -269,7 +269,7 @@ export default function DetailPage({ kind }: { kind: Kind }) {
           <div className="detail-desc">{view.desc}</div>
         </div>
         <div className="detail-price-box">
-          <div className="detail-price">{fmtNum(view.price)}</div>
+          <div className="detail-price">{fmtNum(view.price, view.isStock ? 2 : 3)}</div>
           <div className={`detail-chg ${pctClass(view.pct)}`}>{fmtPct(view.pct)}</div>
           <div className="detail-time mono">
             {detail.lastTradeDate ? `${detail.lastTradeDate} 收盘 · 15:00 CST` : '—'}

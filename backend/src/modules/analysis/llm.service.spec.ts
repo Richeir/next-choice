@@ -59,9 +59,11 @@ describe('LlmService', () => {
 
   it('正常响应时解析并返回结构化结果', async () => {
     const content = JSON.stringify({
-      rating: 'A+',
-      isWorthBuying: true,
-      holdDays: 15,
+      trend: 70,
+      momentum: 60,
+      valuation: 55,
+      volume: 65,
+      stability: 50,
       reason: '趋势向好',
       llmAnalysis: '详细分析',
     });
@@ -73,9 +75,11 @@ describe('LlmService', () => {
     const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
     const result = await service.analyze(context);
     expect(result).toEqual({
-      rating: 'A+',
-      isWorthBuying: true,
-      holdDays: 15,
+      trend: 70,
+      momentum: 60,
+      valuation: 55,
+      volume: 65,
+      stability: 50,
       reason: '趋势向好',
       llmAnalysis: '详细分析',
     });
@@ -86,7 +90,7 @@ describe('LlmService', () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(jsonResponse(JSON.stringify({
-        rating: 'B+', isWorthBuying: false, holdDays: 0, reason: 'r',
+        trend: 60, momentum: 50, valuation: 55, volume: 65, stability: 50, reason: 'r',
       }))),
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -109,11 +113,11 @@ describe('LlmService', () => {
     restore();
   });
 
-  it('rating 越界时重试并在耗尽重试后返回 null', async () => {
+  it('维度得分越界时重试并在耗尽重试后返回 null', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(jsonResponse(JSON.stringify({
-        rating: 'Z', isWorthBuying: true, holdDays: 5, reason: 'r',
+        trend: 120, momentum: 60, valuation: 55, volume: 65, stability: 50, reason: 'r',
       }))),
     }) as unknown as typeof fetch;
 
@@ -124,19 +128,16 @@ describe('LlmService', () => {
     restore();
   });
 
-  it('容忍字符串布尔 isWorthBuying（如 \"true\"）并归一化', async () => {
+  it('容忍维度得分为字符串数字并拒绝，重试后返回 null（不落库脏数据）', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(jsonResponse(JSON.stringify({
-        rating: 'A', isWorthBuying: 'true', holdDays: 10, reason: 'ok',
+        trend: '70', momentum: 60, valuation: 55, volume: 65, stability: 50, reason: 'ok',
       }))),
     }) as unknown as typeof fetch;
 
     const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
-    const result = await service.analyze(context);
-    expect(result).toEqual({ rating: 'A', isWorthBuying: true, holdDays: 10, reason: 'ok' });
-    // 一次成功，无需重试
-    expect(global.fetch as unknown as jest.Mock).toHaveBeenCalledTimes(1);
+    await expect(service.analyze(context)).resolves.toBeNull();
     restore();
   });
 
@@ -147,13 +148,15 @@ describe('LlmService', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(jsonResponse(JSON.stringify({
-          rating: 'A', isWorthBuying: true, holdDays: 10, reason: 'ok',
+          trend: 70, momentum: 60, valuation: 55, volume: 65, stability: 50, reason: 'ok',
         }))),
       }) as unknown as typeof fetch;
 
     const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
     const result = await service.analyze(context);
-    expect(result).toEqual({ rating: 'A', isWorthBuying: true, holdDays: 10, reason: 'ok' });
+    expect(result).toEqual({
+      trend: 70, momentum: 60, valuation: 55, volume: 65, stability: 50, reason: 'ok',
+    });
     restore();
   });
 });

@@ -2,7 +2,7 @@ import {
   ratingFromScore,
   signalFromScore,
   isWorthBuying,
-  compositeScore,
+  compositeScore5,
   holdDaysFromTrend,
   trendFromMa,
   momentumScore,
@@ -58,11 +58,11 @@ describe('scoring', () => {
     expect(isWorthBuying('SELL')).toBe(0);
   });
 
-  it('compositeScore 加权并在 0~100 内', () => {
-    expect(compositeScore(100, 100, 100, 100)).toBeCloseTo(100);
-    expect(compositeScore(0, 0, 0, 0)).toBe(0);
-    const s = compositeScore(80, 60, 50, 40);
-    expect(s).toBeCloseTo(0.35 * 80 + 0.3 * 60 + 0.15 * 50 + 0.2 * 40);
+  it('compositeScore5 加权并在 0~100 内', () => {
+    expect(compositeScore5(100, 100, 100, 100, 100)).toBeCloseTo(100);
+    expect(compositeScore5(0, 0, 0, 0, 0)).toBe(0);
+    const s = compositeScore5(80, 60, 50, 40, 70);
+    expect(s).toBeCloseTo(0.25 * 80 + 0.2 * 60 + 0.2 * 50 + 0.15 * 40 + 0.2 * 70);
   });
 
   it('holdDaysFromTrend 多头给出持有天数，非多头为 0', () => {

@@ -6,6 +6,13 @@ import { KlineRepository, SecurityType, KlineQuery } from '../kline/kline.reposi
 import { JobManagerService } from '../../jobs/job-manager.service';
 import { ConfigService } from '../../config/config.service';
 import { rowToCamel } from '../../common/mapper';
+import {
+  compositeScore5,
+  holdDaysFromTrend,
+  isWorthBuying as isWorthBuyingSignal,
+  ratingFromScore,
+  signalFromScore,
+} from '../../common/scoring';
 
 @Injectable()
 export class AnalysisService {
@@ -67,8 +74,8 @@ export class AnalysisService {
 
     this.analysisRepo.insertAnalysis(type, code, {
       date: today,
-      score: technical.score,
-      signal: technical.signal,
+      score: final.score,
+      signal: final.signal,
       rating: final.rating,
       isWorthBuying: final.isWorthBuying,
       holdDays: final.holdDays,
@@ -90,23 +97,39 @@ export class AnalysisService {
     return rowToCamel(this.analysisRepo.getInfo(type, code) ?? {});
   }
 
+  /**
+   * 用 5 维维度分合成综合分并换算评级/信号/持有天数。
+   * LLM 存在时用 LLM 的维度分，否则降级用技术面维度分（technical.dims）。
+   * 无论哪条路径，score / rating / signal 都出自同一套权重与换算，口径一致。
+   */
   private mergeLlm(
     technical: ReturnType<TechnicalAnalysisService['analyze']>,
     llm: LlmResult | null,
   ) {
-    if (!llm) {
-      return {
-        rating: technical.rating,
-        isWorthBuying: technical.isWorthBuying,
-        holdDays: technical.holdDays,
-        llmAnalysis: null,
-      };
-    }
+    const dims = llm
+      ? {
+          trend: llm.trend,
+          momentum: llm.momentum,
+          valuation: llm.valuation,
+          volume: llm.volume,
+          stability: llm.stability,
+        }
+      : technical.dims;
+    const score = compositeScore5(
+      dims.trend,
+      dims.momentum,
+      dims.valuation,
+      dims.volume,
+      dims.stability,
+    );
+    const signal = signalFromScore(score, technical.trend);
     return {
-      rating: llm.rating,
-      isWorthBuying: llm.isWorthBuying ? 1 : 0,
-      holdDays: llm.holdDays,
-      llmAnalysis: llm.llmAnalysis ?? llm.reason ?? null,
+      score,
+      signal,
+      rating: ratingFromScore(score),
+      isWorthBuying: isWorthBuyingSignal(signal),
+      holdDays: holdDaysFromTrend(technical.trend, score),
+      llmAnalysis: llm?.llmAnalysis ?? llm?.reason ?? null,
     };
   }
 

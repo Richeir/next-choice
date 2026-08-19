@@ -1,11 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../../config/config.service';
 
-/** LLM 输出的结构化结果（映射自 llm-analysis.md §2 schema）。 */
+/** 评分模型的 5 个维度（均 0~100，越高越有利）。 */
+export const DIMENSIONS = ['trend', 'momentum', 'valuation', 'volume', 'stability'] as const;
+
+export type Dimension = (typeof DIMENSIONS)[number];
+
+/** LLM 输出的结构化结果：各维度得分（系统负责合成综合分与换算评级）。 */
 export interface LlmResult {
-  rating: string;
-  isWorthBuying: boolean;
-  holdDays: number;
+  trend: number;
+  momentum: number;
+  valuation: number;
+  volume: number;
+  stability: number;
   reason?: string;
   llmAnalysis?: string;
   // 回填基础信息表（股票）
@@ -28,9 +35,6 @@ export interface LlmContext {
   klineSummary: string;
   technicalIndicators: string;
 }
-
-/** 合法评级枚举（llm-analysis.md §2）。 */
-const RATINGS = ['S+', 'S', 'A+', 'A', 'B+', 'B', 'C+', 'C', 'D'];
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
@@ -132,30 +136,19 @@ export class LlmService {
     }
     if (typeof obj !== 'object' || obj === null) return null;
     const o = obj as Record<string, unknown>;
-    // 容忍字符串布尔（LLM 偶尔输出 "true"/"false"），归一化为布尔；非法类型视为无效
-    let isWorthBuying: boolean | undefined;
-    if (typeof o.isWorthBuying === 'boolean') {
-      isWorthBuying = o.isWorthBuying;
-    } else if (o.isWorthBuying === 'true') {
-      isWorthBuying = true;
-    } else if (o.isWorthBuying === 'false') {
-      isWorthBuying = false;
-    }
-    if (
-      typeof o.rating !== 'string' ||
-      !RATINGS.includes(o.rating) ||
-      isWorthBuying === undefined ||
-      typeof o.holdDays !== 'number' ||
-      !Number.isInteger(o.holdDays) ||
-      o.holdDays < 0 ||
-      o.holdDays > 365
-    ) {
-      return null;
+    // 校验 5 个维度得分均为 0~100 的数值；任一非法则整次丢弃并重试
+    const dims: Record<Dimension, number> = {} as Record<Dimension, number>;
+    for (const dim of DIMENSIONS) {
+      const v = o[dim];
+      if (typeof v !== 'number' || v < 0 || v > 100) return null;
+      dims[dim] = v;
     }
     return {
-      rating: o.rating,
-      isWorthBuying,
-      holdDays: o.holdDays,
+      trend: dims.trend,
+      momentum: dims.momentum,
+      valuation: dims.valuation,
+      volume: dims.volume,
+      stability: dims.stability,
       reason: typeof o.reason === 'string' ? o.reason : undefined,
       llmAnalysis: typeof o.llmAnalysis === 'string' ? o.llmAnalysis : undefined,
       ...(typeof o.industry === 'string' ? { industry: o.industry } : {}),

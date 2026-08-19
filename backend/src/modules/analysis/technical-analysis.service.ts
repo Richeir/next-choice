@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
-  compositeScore,
+  compositeScore5,
   holdDaysFromTrend,
   isWorthBuying,
   momentumScore,
@@ -22,12 +22,22 @@ export interface KlinePoint {
   volume: number;
 }
 
+export interface DimensionScores {
+  trend: number;
+  momentum: number;
+  valuation: number;
+  volume: number;
+  stability: number;
+}
+
 export interface TechnicalResult {
   score: number;
   signal: Signal;
   rating: string;
   isWorthBuying: 0 | 1;
   holdDays: number;
+  /** 各维度原始得分（LLM 缺失时用于降级，估值取中性 50）。 */
+  dims: DimensionScores;
   ma5: number | null;
   ma20: number | null;
   ma60: number | null;
@@ -51,6 +61,7 @@ export class TechnicalAnalysisService {
         rating: 'D',
         isWorthBuying: 0,
         holdDays: 0,
+        dims: { trend: 0, momentum: 0, valuation: 50, volume: 0, stability: 0 },
         ma5: null,
         ma20: null,
         ma60: null,
@@ -75,11 +86,20 @@ export class TechnicalAnalysisService {
     const volatility20 = annualizedVolatility(closes, 20);
     const volumeRatio = points.length >= 5 ? calcVolumeRatio(points, 5, 20) : null;
 
-    const tScore = trendScore(trend);
-    const mScore = momentum20 !== null ? momentumScore(momentum20) : 50;
-    const vScore = volatility20 !== null ? volatilityScore(volatility20) : 50;
-    const volScore = volumeRatio !== null ? volumeScore(volumeRatio) : 50;
-    const score = compositeScore(tScore, mScore, vScore, volScore);
+    const dims: DimensionScores = {
+      trend: trendScore(trend),
+      momentum: momentum20 !== null ? momentumScore(momentum20) : 50,
+      valuation: 50, // 技术面无法判断估值，给中性分
+      volume: volumeRatio !== null ? volumeScore(volumeRatio) : 50,
+      stability: volatility20 !== null ? volatilityScore(volatility20) : 50,
+    };
+    const score = compositeScore5(
+      dims.trend,
+      dims.momentum,
+      dims.valuation,
+      dims.volume,
+      dims.stability,
+    );
 
     const signal = signalFromScore(score, trend);
     const rating = ratingFromScore(score);
@@ -92,6 +112,7 @@ export class TechnicalAnalysisService {
       rating,
       isWorthBuying: isWorthBuying(signal),
       holdDays,
+      dims,
       ma5,
       ma20,
       ma60,

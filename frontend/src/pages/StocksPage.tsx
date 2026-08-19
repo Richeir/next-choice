@@ -6,6 +6,7 @@ import { useListPage } from '../hooks/useListPage';
 import FilterBar, { type FilterField } from '../components/FilterBar';
 import Pagination from '../components/Pagination';
 import StatusTag from '../components/StatusTag';
+import RatingTag from '../components/RatingTag';
 import { Empty, ErrorView, Loading } from '../components/StateViews';
 import { fmtAmountYi, fmtInt, fmtNum, fmtPct, pctClass, shortCode } from '../utils/format';
 import { PAGE_SIZE } from '../config';
@@ -141,6 +142,7 @@ export default function StocksPage() {
                 <tr>
                   <th>代码</th>
                   <th>名称 / 行业</th>
+                  <th>评级</th>
                   <th className="num">最新</th>
                   <th className="num">涨跌</th>
                   <th className="num">成交额</th>
@@ -156,6 +158,9 @@ export default function StocksPage() {
                     <td>
                       <div className="cell-name">{it.codeName}</div>
                       <div className="cell-sub">{it.industry ?? '—'}</div>
+                    </td>
+                    <td>
+                      <RatingTag rating={it.analysis?.rating ?? null} />
                     </td>
                     <td className="num mono">{fmtNum(it.lastClose)}</td>
                     <td className={`num mono ${pctClass(it.lastPctChg)}`}>

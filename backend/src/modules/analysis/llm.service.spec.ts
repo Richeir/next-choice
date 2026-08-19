@@ -124,6 +124,22 @@ describe('LlmService', () => {
     restore();
   });
 
+  it('容忍字符串布尔 isWorthBuying（如 \"true\"）并归一化', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(jsonResponse(JSON.stringify({
+        rating: 'A', isWorthBuying: 'true', holdDays: 10, reason: 'ok',
+      }))),
+    }) as unknown as typeof fetch;
+
+    const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
+    const result = await service.analyze(context);
+    expect(result).toEqual({ rating: 'A', isWorthBuying: true, holdDays: 10, reason: 'ok' });
+    // 一次成功，无需重试
+    expect(global.fetch as unknown as jest.Mock).toHaveBeenCalledTimes(1);
+    restore();
+  });
+
   it('LLM 端点异常时重试并最终返回 null', async () => {
     global.fetch = jest.fn()
       .mockRejectedValueOnce(new Error('network'))

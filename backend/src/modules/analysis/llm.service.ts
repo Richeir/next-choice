@@ -132,10 +132,19 @@ export class LlmService {
     }
     if (typeof obj !== 'object' || obj === null) return null;
     const o = obj as Record<string, unknown>;
+    // 容忍字符串布尔（LLM 偶尔输出 "true"/"false"），归一化为布尔；非法类型视为无效
+    let isWorthBuying: boolean | undefined;
+    if (typeof o.isWorthBuying === 'boolean') {
+      isWorthBuying = o.isWorthBuying;
+    } else if (o.isWorthBuying === 'true') {
+      isWorthBuying = true;
+    } else if (o.isWorthBuying === 'false') {
+      isWorthBuying = false;
+    }
     if (
       typeof o.rating !== 'string' ||
       !RATINGS.includes(o.rating) ||
-      typeof o.isWorthBuying !== 'boolean' ||
+      isWorthBuying === undefined ||
       typeof o.holdDays !== 'number' ||
       !Number.isInteger(o.holdDays) ||
       o.holdDays < 0 ||
@@ -145,7 +154,7 @@ export class LlmService {
     }
     return {
       rating: o.rating,
-      isWorthBuying: o.isWorthBuying,
+      isWorthBuying,
       holdDays: o.holdDays,
       reason: typeof o.reason === 'string' ? o.reason : undefined,
       llmAnalysis: typeof o.llmAnalysis === 'string' ? o.llmAnalysis : undefined,

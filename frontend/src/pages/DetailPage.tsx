@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   analyze,
@@ -137,6 +137,14 @@ export default function DetailPage({ kind }: { kind: Kind }) {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -162,6 +170,8 @@ export default function DetailPage({ kind }: { kind: Kind }) {
         const job = await getJob(jobId);
         if (job.status === 'done' || job.status === 'failed') return job;
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        // 组件已卸载时停止轮询，避免泄漏请求
+        if (!mountedRef.current) return null;
       }
     },
     [],
@@ -173,12 +183,14 @@ export default function DetailPage({ kind }: { kind: Kind }) {
     try {
       const { jobId } = await analyze(kind, code);
       const job = await pollUntilDone(jobId);
-      if (job.status === 'failed') {
+      if (job?.status === 'failed') {
         setAnalyzeError(job.error || '分析失败，请稍后重试');
       }
     } catch (e: unknown) {
+      if (!mountedRef.current) return;
       setAnalyzeError(e instanceof Error ? e.message : '分析失败，请稍后重试');
     } finally {
+      if (!mountedRef.current) return;
       setAnalyzing(false);
       load();
     }

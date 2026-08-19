@@ -26,6 +26,12 @@
     python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
         --start 2026-01-05
 
+    # 日常增量更新（需已有全量数据）：从每只证券最后一根 K 线日期开始抓，
+    # 按频率门控：daily 仅工作日；weekly 周六/周日且未入库或距今超 7 天；
+    # monthly 月初前 3 天或距今超 31 天（股票/ETF 同理）
+    python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
+        --incremental
+
 流程：login -> 逐个 code 写基础信息 -> 逐个 (code, freq, adjust) 拉 K 线入库
       -> 用不复权日 K 回填行情字段 -> logout。
 """
@@ -42,7 +48,8 @@ log = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import (SCHEMA_PATH, backfill_etf_info, backfill_stock_info,
-                fetched_today, init_db, insert_kline, mark_fetched)
+                fetched_today, init_db, insert_kline, kline_max_date,
+                mark_fetched)
 from transform import kline_table, market_of
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -257,20 +264,62 @@ def update_etf_list(conn, date_str):
     return n_ok, n_fail
 
 
-def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, today):
-    """全量 K 线抓取通用主循环（股票/ETF 共用）。
+def _due_freqs(freqs, today, last_dates):
+    """增量模式频率门控：返回该证券本次需要更新的频率列表。
+
+    today: datetime.date；last_dates: {freq: 最后一根 K 线日期 'YYYY-MM-DD' 或 None}。
+    None 表示该频率无数据（新证券）——不门控，直接拉取补全。
+    规则（仅对已有数据的频率生效）：
+    - daily:   仅周一～周五更新（周末不开盘）；
+    - weekly:  周六/周日且最后周 K 距今 >2 天（周 K 周六生成；周六成功入库后
+      周日不再重抓，若周六未抓到新数据周日会重试），或距今 >7 天（补漏）；
+    - monthly: 月初前 3 天（day<=3），或最后一根月 K 距今 >31 天（补漏）。
+    """
+    due = []
+    for f in freqs:
+        last = last_dates.get(f)
+        if last is None:
+            due.append(f)
+        elif f == "daily":
+            if today.weekday() < 5:
+                due.append(f)
+        elif f == "weekly":
+            gap = (today - date.fromisoformat(last)).days
+            if (today.weekday() >= 5 and gap > 2) or gap > 7:
+                due.append(f)
+        elif f == "monthly":
+            if today.day <= 3 or (today - date.fromisoformat(last)).days > 31:
+                due.append(f)
+    return due
+
+
+def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, today,
+                      incremental=False):
+    """K 线抓取通用主循环（股票/ETF 共用，支持全量与增量两种模式）。
 
     从 {kind}_info 表读全部 code，逐个抓日/周/月 × 复权 K 线。
     - 断点续传：`force=False` 时跳过 last_fetch_date==today 的证券；
-    - 标记完成：本次请求覆盖全部三档（daily+weekly+monthly）且该证券所有组合
-      都成功时，才把 last_fetch_date 记为 today（满足“日/周/月都更新完才标记”）。
+    - 全量模式：本次请求覆盖全部三档（daily+weekly+monthly）且该证券所有组合
+      都成功时，才把 last_fetch_date 记为 today（满足“日/周/月都更新完才标记”）；
+    - 增量模式（incremental=True）：每只证券按 DB 中最后 K 线日期决定起始日与
+      频率门控（见 _due_freqs），本轮“应更”频率全部成功即标记；
+      退市（status='0'）证券直接跳过。
     单只失败记 warning 不中断整体；每只抓完即提交。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
     today = today or date.today().isoformat()
+    today_dt = date.fromisoformat(today)
     fullset = set(freqs) == {"daily", "weekly", "monthly"}
-    codes = [r["code"] for r in conn.execute(f"SELECT code FROM {table}")]
+    rows = conn.execute(f"SELECT code, status FROM {table}").fetchall()
+    codes = [r["code"] for r in rows]
+    # 增量模式：退市（status='0'）证券不会再有新数据，跳过避免周期性空查；
+    # 全量模式不跳过（保持历史补全行为）
+    delisted = ({r["code"] for r in rows if r["status"] == "0"}
+                if incremental else set())
     done = set() if force else fetched_today(conn, kind, today)
+    # 增量模式：每张 K 线表一次性预加载各证券最后日期，避免逐只查库
+    max_dates = ({f: kline_max_date(conn, kind, f) for f in freqs}
+                 if incremental else {})
     n_ok = n_fail = n_skip = 0
     total = len(codes)
     for idx, code in enumerate(codes, 1):
@@ -279,17 +328,37 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, toda
             log.info("%s kline %d/%d code=%s skipped (fetched today)", kind, idx, total, code)
             print(f"[{kind}-kline] {idx}/{total} {code} skip ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
             continue
+        if code in delisted:
+            n_skip += 1
+            log.info("%s kline %d/%d code=%s skipped (delisted)", kind, idx, total, code)
+            print(f"[{kind}-kline] {idx}/{total} {code} skip(delisted) ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+            continue
+        if incremental:
+            last_dates = {f: max_dates[f].get(code) for f in freqs}
+            due = _due_freqs(freqs, today_dt, last_dates)
+            if not due:
+                n_skip += 1
+                log.info("%s kline %d/%d code=%s skipped (nothing due)", kind, idx, total, code)
+                print(f"[{kind}-kline] {idx}/{total} {code} skip(not due) ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+                continue
+            loop_freqs = due
+        else:
+            last_dates = {}
+            loop_freqs = freqs
         success = True
         try:
-            for freq in freqs:
+            for freq in loop_freqs:
+                # 增量：从 DB 最后日期重拉（覆盖修正）；无数据回退到 start
+                fstart = (last_dates.get(freq) or start) if incremental else start
                 for adj in adjusts:
-                    fetch_kline(conn, kind, code, freq, adj, start, end)
+                    fetch_kline(conn, kind, code, freq, adj, fstart, end)
             n_ok += 1
         except (RuntimeError, ValueError, socket.timeout) as e:
             log.warning("fetch_kline %s failed: %s", code, e)
             n_fail += 1
             success = False
-        if success and fullset:
+        # 标记：全量需三档全集成功；增量只需本轮“应更”频率全部成功
+        if success and (incremental or fullset):
             mark_fetched(conn, kind, code, today)
         conn.commit()  # 每只抓完即提交：中断不丢已处理数据
         log.info("%s kline %d/%d code=%s ok=%d fail=%d", kind, idx, total, code, n_ok, n_fail)
@@ -297,35 +366,57 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, toda
     return n_ok, n_fail
 
 
-def fetch_stock_kline(conn, freqs, adjusts, start, end, force=False, today=None):
+def fetch_stock_kline(conn, freqs, adjusts, start, end, force=False, today=None,
+                      incremental=False):
     """从 stock_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
 
     依赖 stock_info 表已由 `--update-stock-list` 填充；本命令不重新查询列表接口。
     支持断点续传（跳过 last_fetch_date==today 的股票）与请求超时失败继续。
+    incremental=True 时为日常增量模式：起始日取每只证券在库中的最后 K 线日期，
+    按频率门控（daily 工作日 / weekly 周末且未入库或超 7 天 / monthly 月初或超 31 天），
+    退市（status='0'）股票直接跳过。
     结束后用不复权日 K 回填 stock_info 行情字段。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
-    n_ok, n_fail = _kline_fetch_loop(conn, "stock", "stock_info", freqs, adjusts, start, end, force, today)
+    n_ok, n_fail = _kline_fetch_loop(conn, "stock", "stock_info", freqs, adjusts,
+                                     start, end, force, today, incremental)
     backfill_stock_info(conn)
     return n_ok, n_fail
 
 
-def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False, today=None):
+def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False, today=None,
+                    incremental=False):
     """从 etf_info 表读全部 code，逐个抓 K 线（日/周/月 × 复权）。
 
     依赖 etf_info 表已由 `--update-etf-list` 填充；本命令不重新查询列表接口。
     支持断点续传（跳过 last_fetch_date==today 的 ETF）与请求超时失败继续。
+    incremental=True 时为日常增量模式：起始日取每只证券在库中的最后 K 线日期，
+    按频率门控（daily 工作日 / weekly 周末且未入库或超 7 天 / monthly 月初或超 31 天），
+    退市（status='0'）ETF 直接跳过。
     结束后用不复权日 K 回填 etf_info 行情字段。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
-    n_ok, n_fail = _kline_fetch_loop(conn, "etf", "etf_info", freqs, adjusts, start, end, force, today)
+    n_ok, n_fail = _kline_fetch_loop(conn, "etf", "etf_info", freqs, adjusts,
+                                     start, end, force, today, incremental)
     backfill_etf_info(conn)
     return n_ok, n_fail
 
 
+class _DataParser(argparse.ArgumentParser):
+    """带组合校验的解析器：--incremental 仅适用于 K 线全量抓取命令。"""
+
+    def parse_args(self, args=None, namespace=None):
+        ns = super().parse_args(args, namespace)
+        if ns.incremental and not (ns.fetch_stock_kline or ns.fetch_etf_kline):
+            self.error(
+                "--incremental 只能与 --fetch-stock-kline / --fetch-etf-kline 一起使用"
+            )
+        return ns
+
+
 def build_parser():
     """构造 CLI 参数解析器。--codes 与列表/K 线全量抓取选项互斥。"""
-    parser = argparse.ArgumentParser(description="BaoStock 数据采集")
+    parser = _DataParser(description="BaoStock 数据采集")
     parser.add_argument("--db", default=os.path.join(ROOT, "data", "market.db"))
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--codes",
@@ -349,6 +440,11 @@ def build_parser():
                         help="--update-etf-list 使用的日期 YYYY-MM-DD，默认今天")
     parser.add_argument("--force", action="store_true",
                        help="忽略 last_fetch_date 标记，强制全量重抓（供换日期窗口等场景）")
+    parser.add_argument("--incremental", action="store_true",
+                       help="日常增量更新：从每只证券最后一根 K 线日期开始抓，"
+                            "并按频率门控（daily 仅工作日；weekly 周六/周日且"
+                            "未入库或距今超 7 天；monthly 月初前 3 天或距今超 31 天）；"
+                            "与 --force 组合时忽略完成标记但门控仍生效")
     parser.add_argument("--timeout", type=int, default=30,
                        help="网络请求超时秒数，0 禁用超时（默认 30）")
     return parser
@@ -389,10 +485,11 @@ def main(argv=None):
                        if args.adjust else ["2", "3"])
             start, end = resolve_date_range(args.start, args.end)
             n_ok, n_fail = fetch_stock_kline(conn, freqs, adjusts, start, end,
-                                              force=args.force)
+                                              force=args.force,
+                                              incremental=args.incremental)
             print(f"done. db={args.db} stock_kline ok={n_ok} fail={n_fail} "
                   f"freqs={freqs} adjusts={adjusts} start={start} end={end} "
-                  f"force={args.force}")
+                  f"force={args.force} incremental={args.incremental}")
         elif args.fetch_etf_kline:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             # db-design.md：每张 K 线表同时保存 前复权(2) 与 不复权(3)；
@@ -401,10 +498,11 @@ def main(argv=None):
                        if args.adjust else ["2", "3"])
             start, end = resolve_date_range(args.start, args.end)
             n_ok, n_fail = fetch_etf_kline(conn, freqs, adjusts, start, end,
-                                            force=args.force)
+                                            force=args.force,
+                                            incremental=args.incremental)
             print(f"done. db={args.db} etf_kline ok={n_ok} fail={n_fail} "
                   f"freqs={freqs} adjusts={adjusts} start={start} end={end} "
-                  f"force={args.force}")
+                  f"force={args.force} incremental={args.incremental}")
         else:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             # 指定代码路径保持原缺省：不复权(3)

@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "stock_analysis",
     "etf_analysis",
     "adjust_factor",
+    "analysis_config",
 }
 
 

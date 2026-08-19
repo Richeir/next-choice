@@ -41,7 +41,10 @@ export class SecuritiesService {
   async getStockDetail(code: string): Promise<Record<string, unknown>> {
     const row = this.stockRepo.findDetail(code);
     if (!row) throw new NotFoundException(`stock ${code} not found`);
-    return rowToCamel(row);
+    return this.applyLastQuote(
+      this.stockRepo.findLastDailyQuote('stock', code),
+      rowToCamel(row),
+    );
   }
 
   async listStockAnalysis(
@@ -72,7 +75,10 @@ export class SecuritiesService {
   async getEtfDetail(code: string): Promise<Record<string, unknown>> {
     const row = this.etfRepo.findDetail(code);
     if (!row) throw new NotFoundException(`etf ${code} not found`);
-    const mapped = rowToCamel(row);
+    const mapped = this.applyLastQuote(
+      this.etfRepo.findLastDailyQuote('etf', code),
+      rowToCamel(row),
+    );
     if (mapped['lastClose'] != null) mapped['nav'] = mapped['lastClose'];
     return mapped;
   }
@@ -109,6 +115,22 @@ export class SecuritiesService {
     if (base['lastClose'] != null) base['nav'] = base['lastClose'];
     const analysis = this.analysisSummaryFromRow(row);
     return { ...base, analysis };
+  }
+
+  /**
+   * 用不复权日 K 的最新一行（真实最后交易日）覆盖快照中的行情字段，
+   * 避免 stock_info / etf_info 快照过期时详情页显示前一交易日收盘价。
+   * 仅当 K 线存在对应行时才覆盖，缺失时回退到快照值。
+   */
+  private applyLastQuote(
+    quote: Record<string, unknown> | undefined,
+    detail: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (!quote || quote.date == null) return detail;
+    detail['lastTradeDate'] = quote.date;
+    if (quote.close != null) detail['lastClose'] = quote.close;
+    if (quote.pctChg != null) detail['lastPctChg'] = quote.pctChg;
+    return detail;
   }
 
   private stripAnalysisCols(obj: Record<string, unknown>): Record<string, unknown> {

@@ -87,6 +87,19 @@ def fetched_today(conn, kind, date_str):
     return {r["code"] for r in rows}
 
 
+def kline_max_date(conn, kind, freq):
+    """返回 K 线表中每只证券的最后一根 K 线日期 {code: 'YYYY-MM-DD'}。
+
+    跨 adjustflag 聚合（各档复权数据日期一致）；空表返回 {}。
+    增量更新用它确定每只证券的抓取起始日（从最后日期重拉一天覆盖修正）。
+    """
+    table = kline_table(kind, freq)
+    rows = conn.execute(
+        f"SELECT code, MAX(date) AS d FROM {table} GROUP BY code"
+    )
+    return {r["code"]: r["d"] for r in rows}
+
+
 def _kline_columns(kind, freq):
     try:
         return _TABLE_COLS[(kind, freq)]

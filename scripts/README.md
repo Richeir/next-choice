@@ -36,6 +36,11 @@ python fetch_data.py --db ../data/market.db --fetch-etf-kline \
 # 支持断点续传：三档全部成功才标记 last_fetch_date=今天，重跑跳过已标记的）
 python fetch_data.py --db ../data/market.db --fetch-stock-kline \
     --freq daily,weekly,monthly --start 2026-01-05
+
+# 日常增量更新（需已有全量数据）：从每只证券最后一根 K 线日期开始抓，
+# 并按频率门控（见下方「增量更新」节；股票/ETF 同理）
+python fetch_data.py --db ../data/market.db --fetch-stock-kline \
+    --freq daily,weekly,monthly --incremental
 ```
 
 参数说明：
@@ -50,6 +55,7 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 | `--fetch-stock-kline` | 四选一 | — | 根据 `stock_info` 表全量抓取 A 股日/周/月 K 线（需先跑 `--update-stock-list`） |
 | `--list-date` | 否 | 今天 | `--update-etf-list` / `--update-stock-list` 使用的日期 `YYYY-MM-DD` |
 | `--force` | 否 | `False` | 忽略 `last_fetch_date` 标记，强制全量重抓（供换日期窗口等场景） |
+| `--incremental` | 否 | `False` | 日常增量更新：从每只证券最后一根 K 线日期开始抓，并按频率门控；仅限 `--fetch-stock-kline` / `--fetch-etf-kline` |
 | `--timeout` | 否 | `30` | 网络请求超时秒数，`0` 禁用超时（请求卡住到点自动失败并继续） |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3`（`--codes`）/ `2,3`（`--fetch-etf-kline`） | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
@@ -78,6 +84,30 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 > 组合的 K 线（不重新查询列表接口），默认同时写前复权(`2`)与不复权(`3`)两档，
 > 结束后回填对应行情字段；单只失败记 warning 不中断整体，每只打印进度。
 
+## 增量更新（`--incremental`）
+
+全量入库后的日常更新用 `--incremental`（仅限 `--fetch-stock-kline` /
+`--fetch-etf-kline`），避免每次都重拉 5 年窗口：
+
+- **起始日期**：每只证券、每个频率从 DB 中最后一根 K 线的日期开始重拉
+  （重拉最后一天以覆盖可能的数据修正，`INSERT OR REPLACE` 幂等去重）；
+  表里没数据的新证券回退到 `--start` / 默认 5 年窗口补全。
+- **跳过判断**：`last_fetch_date == 今天` 的证券直接跳过（同一天重跑不会重复请求）。
+- **频率门控**（仅对已有数据的频率生效；无数据的新证券不门控直接补全）：
+
+  | 频率 | 何时更新 |
+  |------|----------|
+  | daily | 仅周一～周五（周末不开盘；节后靠最后日期自动补齐） |
+  | weekly | 周六/周日（周 K 周六生成），**或** 最后一根周 K 距今 >7 天（补漏） |
+  | monthly | 月初前 3 天（`day <= 3`），**或** 最后一根月 K 距今 >31 天（补漏） |
+
+- **完成标记**：本轮“应更”频率全部成功才标记 `last_fetch_date = 今天`
+  （被门控跳过的频率不阻塞标记；失败的证券不标记，重跑可继续）。
+
+典型 cron 安排：每天收盘后跑一次 `--fetch-stock-kline --incremental` 和
+`--fetch-etf-kline --incremental` 即可——工作日自动只更日 K，周六/周日只更周 K，
+月初额外更月 K。
+
 ## 断点续传与超时
 
 - **断点续传**：全量抓取支持断点续传。某证券只有当本次请求覆盖**全部三档**
@@ -103,10 +133,12 @@ python -m pytest tests -q
 ```
 
 - `tests/test_transform.py`：数据转换 / 市场推断 / 表名映射
-- `tests/test_db.py`：建表（11 张）、幂等写入、行情回填（临时库）
+- `tests/test_db.py`：建表（12 张）、幂等写入、行情回填（临时库）
 - `tests/test_fetch.py`：`fetch_data` 纯逻辑（K 线字段、日期窗口）
 - `tests/test_fetch_etf_list.py`：`update_etf_list` + CLI 解析（mock BaoStock）
 - `tests/test_fetch_etf_kline.py`：`fetch_etf_kline` 全量 K 线抓取 + 默认复权（mock BaoStock）
 - `tests/test_fetch_stock_kline.py`：`fetch_stock_kline` 全量 K 线抓取 + 默认复权（mock BaoStock）
 - `tests/test_fetch_stock_list.py`：`update_stock_list` + CLI 解析（mock BaoStock）
+- `tests/test_fetch_incremental.py`：`--incremental` 增量模式：起始日期 / 频率门控 /
+  跳过与标记逻辑（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证

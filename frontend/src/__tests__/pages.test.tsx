@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import HomePage from '../pages/HomePage';
 import StocksPage from '../pages/StocksPage';
@@ -15,6 +15,8 @@ vi.mock('../api', () => ({
   getStockAnalysis: vi.fn(),
   getEtfAnalysis: vi.fn(),
   getKline: vi.fn(),
+  analyze: vi.fn(),
+  getJob: vi.fn(),
 }));
 
 vi.mock('../components/KlineChart', () => ({
@@ -30,6 +32,8 @@ import {
   getEtfDetail,
   getEtfAnalysis,
   getKline,
+  analyze,
+  getJob,
 } from '../api';
 
 const stats = { stockCnt: 5348, etfCnt: 624, analyzedCnt: 4832, analyzedTimes: 9000 };
@@ -66,6 +70,7 @@ const etfItem = {
 };
 
 beforeEach(() => {
+  vi.useRealTimers();
   vi.mocked(getStats).mockResolvedValue(stats);
   vi.mocked(getStocks).mockResolvedValue({
     items: [stockItem],
@@ -238,6 +243,81 @@ describe('DetailPage', () => {
     expect(screen.getAllByText('4.182').length).toBeGreaterThan(0);
     expect(screen.getByText('暂无分析结果')).toBeInTheDocument();
     expect(screen.getAllByText('华泰柏瑞').length).toBeGreaterThan(0);
+  });
+
+  it('点击触发分析后调用 analyze 并轮询 job，完成后刷新分析卡片', async () => {
+    vi.mocked(getStockDetail).mockResolvedValue(detail);
+    vi.mocked(getStockAnalysis)
+      .mockClear()
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 20 })
+      .mockResolvedValueOnce({ items: [analysis], total: 1, page: 1, pageSize: 20 });
+    vi.mocked(getKline).mockResolvedValue([]);
+    vi.mocked(analyze).mockResolvedValue({ accepted: true, jobId: 'job-1' });
+    vi.mocked(getJob).mockResolvedValue({ jobId: 'job-1', status: 'done', result: null });
+
+    render(
+      <MemoryRouter initialEntries={['/stocks/sh.600519']}>
+        <Routes>
+          <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // 初始无分析结果
+    expect(await screen.findByText('暂无分析结果')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('开始分析'));
+    expect(analyze).toHaveBeenCalledWith('stock', 'sh.600519');
+
+    await waitFor(() => expect(getJob).toHaveBeenCalledWith('job-1'));
+
+    // job 完成后重新拉取分析列表，刷新出分析卡片
+    await waitFor(() => expect(screen.getByText('A+')).toBeInTheDocument());
+    expect(screen.getByText(/综合评分 · 建议/)).toBeInTheDocument();
+  });
+
+  it('组件卸载后停止轮询（不产生泄漏请求）', async () => {
+    vi.useFakeTimers();
+    vi.mocked(getStockDetail).mockResolvedValue(detail);
+    vi.mocked(getStockAnalysis)
+      .mockClear()
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.mocked(getKline).mockResolvedValue([]);
+    vi.mocked(analyze).mockResolvedValue({ accepted: true, jobId: 'job-poll' });
+    // 一直 running，永不 done，用于观察卸载后是否仍在轮询
+    vi.mocked(getJob).mockResolvedValue({ jobId: 'job-poll', status: 'running', result: null });
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/stocks/sh.600519']}>
+        <Routes>
+          <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // 让初始加载完成
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText('暂无分析结果')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('开始分析'));
+    // 触发 analyze 并完成首次轮询
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getJob).toHaveBeenCalled();
+    const callsAfterFirst = vi.mocked(getJob).mock.calls.length;
+
+    unmount();
+    // 推进多个轮询周期，若仍存活应继续调用 getJob
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500 * 3);
+    });
+
+    // 卸载后不应再产生新的 getJob 调用
+    expect(vi.mocked(getJob).mock.calls.length).toBe(callsAfterFirst);
+    vi.useRealTimers();
   });
 
   it('404 时展示错误信息', async () => {

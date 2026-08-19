@@ -427,6 +427,39 @@ table.data-table {
   color: var(--gray-900);
 }
 
+/* ---------- 触发分析 ---------- */
+
+.analyze-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 2px;
+}
+
+.btn-analyze {
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 6px;
+  padding: 7px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-analyze:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-analyze:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.analyze-error {
+  color: var(--red);
+  font-size: 13px;
+}
+
 /* ---------- 分页 ---------- */
 
 .pagination {

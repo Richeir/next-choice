@@ -1,3 +1,7 @@
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+// 从仓库根加载 .env（后端在 backend/ 下启动，cwd 默认不指向仓库根）
+dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';

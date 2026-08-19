@@ -88,6 +88,22 @@ export abstract class SecuritiesBase {
       .get(code) as Record<string, unknown> | undefined;
   }
 
+  /** 取该标的不复权日 K 最新一行（最后一个交易日行情），无数据返回 undefined。 */
+  findLastDailyQuote(
+    kind: 'stock' | 'etf',
+    code: string,
+  ): Record<string, unknown> | undefined {
+    const table = `${kind}_kline_daily`;
+    return this.db
+      .prepare(
+        `SELECT date, close, pctChg
+         FROM ${table}
+         WHERE code = ? AND adjustflag = '3'
+         ORDER BY date DESC LIMIT 1`,
+      )
+      .get(code) as Record<string, unknown> | undefined;
+  }
+
   listAnalysis(
     code: string,
     page: number,

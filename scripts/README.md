@@ -55,7 +55,7 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 | `--fetch-stock-kline` | 四选一 | — | 根据 `stock_info` 表全量抓取 A 股日/周/月 K 线（需先跑 `--update-stock-list`） |
 | `--list-date` | 否 | 今天 | `--update-etf-list` / `--update-stock-list` 使用的日期 `YYYY-MM-DD` |
 | `--force` | 否 | `False` | 忽略 `last_fetch_date` 标记，强制全量重抓（供换日期窗口等场景） |
-| `--incremental` | 否 | `False` | 日常增量更新：从每只证券最后一根 K 线日期开始抓，并按频率门控；仅限 `--fetch-stock-kline` / `--fetch-etf-kline` |
+| `--incremental` | 否 | `False` | 日常增量更新：从每只证券最后一根 K 线日期开始抓，并按频率门控；仅限 `--fetch-stock-kline` / `--fetch-etf-kline`；与 `--force` 组合时忽略完成标记但门控仍生效 |
 | `--timeout` | 否 | `30` | 网络请求超时秒数，`0` 禁用超时（请求卡住到点自动失败并继续） |
 | `--freq` | 否 | `daily` | 逗号分隔频率：`daily,weekly,monthly` |
 | `--adjust` | 否 | `3`（`--codes`）/ `2,3`（`--fetch-etf-kline`） | 逗号分隔复权：`2`(前复权) / `3`(不复权) |
@@ -92,17 +92,21 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 - **起始日期**：每只证券、每个频率从 DB 中最后一根 K 线的日期开始重拉
   （重拉最后一天以覆盖可能的数据修正，`INSERT OR REPLACE` 幂等去重）；
   表里没数据的新证券回退到 `--start` / 默认 5 年窗口补全。
-- **跳过判断**：`last_fetch_date == 今天` 的证券直接跳过（同一天重跑不会重复请求）。
+- **跳过判断**：`last_fetch_date == 今天` 的证券直接跳过（同一天重跑不会重复请求）；
+  退市（`status='0'`）证券不会再有新数据，增量模式也直接跳过（全量模式不跳过）。
 - **频率门控**（仅对已有数据的频率生效；无数据的新证券不门控直接补全）：
 
   | 频率 | 何时更新 |
   |------|----------|
   | daily | 仅周一～周五（周末不开盘；节后靠最后日期自动补齐） |
-  | weekly | 周六/周日（周 K 周六生成），**或** 最后一根周 K 距今 >7 天（补漏） |
+  | weekly | 周六/周日且最后周 K 距今 >2 天（周 K 周六生成；周六入库后周日不重抓，周六未抓到时周日重试），**或** 最后一根周 K 距今 >7 天（补漏） |
   | monthly | 月初前 3 天（`day <= 3`），**或** 最后一根月 K 距今 >31 天（补漏） |
 
 - **完成标记**：本轮“应更”频率全部成功才标记 `last_fetch_date = 今天`
   （被门控跳过的频率不阻塞标记；失败的证券不标记，重跑可继续）。
+- **与 `--force` 组合**：`--force` 只忽略 `last_fetch_date` 跳过标记（重新处理
+  全部证券），频率门控与“从最后日期开始抓”的增量起点仍然生效；需要换日期
+  窗口全量重抓时请勿加 `--incremental`。
 
 典型 cron 安排：每天收盘后跑一次 `--fetch-stock-kline --incremental` 和
 `--fetch-etf-kline --incremental` 即可——工作日自动只更日 K，周六/周日只更周 K，

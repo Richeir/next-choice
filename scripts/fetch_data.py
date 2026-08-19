@@ -27,7 +27,7 @@
         --start 2026-01-05
 
     # 日常增量更新（需已有全量数据）：从每只证券最后一根 K 线日期开始抓，
-    # 按频率门控：daily 仅工作日；weekly 周六/周日或距今超 7 天；
+    # 按频率门控：daily 仅工作日；weekly 周六/周日且未入库或距今超 7 天；
     # monthly 月初前 3 天或距今超 31 天（股票/ETF 同理）
     python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
         --incremental
@@ -271,7 +271,8 @@ def _due_freqs(freqs, today, last_dates):
     None 表示该频率无数据（新证券）——不门控，直接拉取补全。
     规则（仅对已有数据的频率生效）：
     - daily:   仅周一～周五更新（周末不开盘）；
-    - weekly:  周六/周日（周 K 周六生成），或最后一根周 K 距今 >7 天（补漏）；
+    - weekly:  周六/周日且最后周 K 距今 >2 天（周 K 周六生成；周六成功入库后
+      周日不再重抓，若周六未抓到新数据周日会重试），或距今 >7 天（补漏）；
     - monthly: 月初前 3 天（day<=3），或最后一根月 K 距今 >31 天（补漏）。
     """
     due = []
@@ -283,7 +284,8 @@ def _due_freqs(freqs, today, last_dates):
             if today.weekday() < 5:
                 due.append(f)
         elif f == "weekly":
-            if today.weekday() >= 5 or (today - date.fromisoformat(last)).days > 7:
+            gap = (today - date.fromisoformat(last)).days
+            if (today.weekday() >= 5 and gap > 2) or gap > 7:
                 due.append(f)
         elif f == "monthly":
             if today.day <= 3 or (today - date.fromisoformat(last)).days > 31:
@@ -300,14 +302,20 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, toda
     - 全量模式：本次请求覆盖全部三档（daily+weekly+monthly）且该证券所有组合
       都成功时，才把 last_fetch_date 记为 today（满足“日/周/月都更新完才标记”）；
     - 增量模式（incremental=True）：每只证券按 DB 中最后 K 线日期决定起始日与
-      频率门控（见 _due_freqs），本轮“应更”频率全部成功即标记。
+      频率门控（见 _due_freqs），本轮“应更”频率全部成功即标记；
+      退市（status='0'）证券直接跳过。
     单只失败记 warning 不中断整体；每只抓完即提交。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
     today = today or date.today().isoformat()
     today_dt = date.fromisoformat(today)
     fullset = set(freqs) == {"daily", "weekly", "monthly"}
-    codes = [r["code"] for r in conn.execute(f"SELECT code FROM {table}")]
+    rows = conn.execute(f"SELECT code, status FROM {table}").fetchall()
+    codes = [r["code"] for r in rows]
+    # 增量模式：退市（status='0'）证券不会再有新数据，跳过避免周期性空查；
+    # 全量模式不跳过（保持历史补全行为）
+    delisted = ({r["code"] for r in rows if r["status"] == "0"}
+                if incremental else set())
     done = set() if force else fetched_today(conn, kind, today)
     # 增量模式：每张 K 线表一次性预加载各证券最后日期，避免逐只查库
     max_dates = ({f: kline_max_date(conn, kind, f) for f in freqs}
@@ -319,6 +327,11 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force, toda
             n_skip += 1
             log.info("%s kline %d/%d code=%s skipped (fetched today)", kind, idx, total, code)
             print(f"[{kind}-kline] {idx}/{total} {code} skip ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+            continue
+        if code in delisted:
+            n_skip += 1
+            log.info("%s kline %d/%d code=%s skipped (delisted)", kind, idx, total, code)
+            print(f"[{kind}-kline] {idx}/{total} {code} skip(delisted) ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
             continue
         if incremental:
             last_dates = {f: max_dates[f].get(code) for f in freqs}
@@ -360,7 +373,8 @@ def fetch_stock_kline(conn, freqs, adjusts, start, end, force=False, today=None,
     依赖 stock_info 表已由 `--update-stock-list` 填充；本命令不重新查询列表接口。
     支持断点续传（跳过 last_fetch_date==today 的股票）与请求超时失败继续。
     incremental=True 时为日常增量模式：起始日取每只证券在库中的最后 K 线日期，
-    并按频率门控（daily 工作日 / weekly 周末或超 7 天 / monthly 月初或超 31 天）。
+    按频率门控（daily 工作日 / weekly 周末且未入库或超 7 天 / monthly 月初或超 31 天），
+    退市（status='0'）股票直接跳过。
     结束后用不复权日 K 回填 stock_info 行情字段。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
@@ -377,7 +391,8 @@ def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False, today=None,
     依赖 etf_info 表已由 `--update-etf-list` 填充；本命令不重新查询列表接口。
     支持断点续传（跳过 last_fetch_date==today 的 ETF）与请求超时失败继续。
     incremental=True 时为日常增量模式：起始日取每只证券在库中的最后 K 线日期，
-    并按频率门控（daily 工作日 / weekly 周末或超 7 天 / monthly 月初或超 31 天）。
+    按频率门控（daily 工作日 / weekly 周末且未入库或超 7 天 / monthly 月初或超 31 天），
+    退市（status='0'）ETF 直接跳过。
     结束后用不复权日 K 回填 etf_info 行情字段。
     返回 (n_ok, n_fail) 供调用方打印汇总。
     """
@@ -427,8 +442,9 @@ def build_parser():
                        help="忽略 last_fetch_date 标记，强制全量重抓（供换日期窗口等场景）")
     parser.add_argument("--incremental", action="store_true",
                        help="日常增量更新：从每只证券最后一根 K 线日期开始抓，"
-                            "并按频率门控（daily 仅工作日；weekly 周六/周日或"
-                            "距今超 7 天；monthly 月初前 3 天或距今超 31 天）")
+                            "并按频率门控（daily 仅工作日；weekly 周六/周日且"
+                            "未入库或距今超 7 天；monthly 月初前 3 天或距今超 31 天）；"
+                            "与 --force 组合时忽略完成标记但门控仍生效")
     parser.add_argument("--timeout", type=int, default=30,
                        help="网络请求超时秒数，0 禁用超时（默认 30）")
     return parser

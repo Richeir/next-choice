@@ -167,7 +167,13 @@ export default function DetailPage({ kind }: { kind: Kind }) {
   const pollUntilDone = useCallback(
     async (jobId: string) => {
       for (;;) {
-        const job = await getJob(jobId);
+        let job;
+        try {
+          job = await getJob(jobId);
+        } catch {
+          // 任务不存在/已失效（如服务重启后 job 记录被清理）：结束轮询，提示重新触发
+          return { notFound: true };
+        }
         if (job.status === 'done' || job.status === 'failed') return job;
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         // 组件已卸载时停止轮询，避免泄漏请求
@@ -183,7 +189,11 @@ export default function DetailPage({ kind }: { kind: Kind }) {
     try {
       const { jobId } = await analyze(kind, code);
       const job = await pollUntilDone(jobId);
-      if (job?.status === 'failed') {
+      if (!job) {
+        // 组件已卸载，忽略
+      } else if ('notFound' in job) {
+        setAnalyzeError('分析任务不存在或已失效，请重新触发分析');
+      } else if (job.status === 'failed') {
         setAnalyzeError(job.error || '分析失败，请稍后重试');
       }
     } catch (e: unknown) {

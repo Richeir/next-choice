@@ -70,9 +70,17 @@ export function holdDaysFromTrend(trend: Trend, score: number): number {
 }
 
 /** 均线排列趋势：MA5>MA20>MA60 多头，反之为空头，否则震荡。 */
-export function trendFromMa(ma5: number, ma20: number, ma60: number): Trend {
-  if (ma5 > ma20 && ma20 > ma60) return '多头';
-  if (ma5 < ma20 && ma20 < ma60) return '空头';
+export function trendFromMa(ma5: number | null, ma20: number | null, ma60: number | null): Trend {
+  if (ma5 != null && ma20 != null && ma60 != null) {
+    if (ma5 > ma20 && ma20 > ma60) return '多头';
+    if (ma5 < ma20 && ma20 < ma60) return '空头';
+    return '震荡';
+  }
+  // MA60 数据不足（如仅 21~59 根）时降级：用 MA5 与 MA20 判断短期方向
+  if (ma5 != null && ma20 != null) {
+    if (ma5 > ma20) return '多头';
+    if (ma5 < ma20) return '空头';
+  }
   return '震荡';
 }
 

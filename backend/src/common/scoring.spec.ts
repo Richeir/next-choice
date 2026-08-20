@@ -90,3 +90,15 @@ describe('scoring', () => {
     expect(volumeScore(1.5)).toBeGreaterThan(volumeScore(5));
   });
 });
+
+describe('scoring.trendFromMa 缺失均线降级', () => {
+  it('MA60 缺失时用 MA5/MA20 判断', () => {
+    expect(trendFromMa(10, 9, null)).toBe('多头');
+    expect(trendFromMa(8, 9, null)).toBe('空头');
+    expect(trendFromMa(9, 9, null)).toBe('震荡');
+  });
+  it('仅剩一根均线时保守返回震荡', () => {
+    expect(trendFromMa(10, null, null)).toBe('震荡');
+    expect(trendFromMa(null, null, null)).toBe('震荡');
+  });
+});

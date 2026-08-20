@@ -25,13 +25,21 @@ const CONFIG_KEYS: (keyof AnalysisConfig)[] = [
 export class ConfigService {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   private readonly defaults: AnalysisConfig = require('./analysis.config.json');
+  private cache: AnalysisConfig | null = null;
 
   constructor(
     @Inject('DATABASE_SERVICE') private readonly db: DatabaseService,
   ) {}
 
-  /** 返回合并后的配置：DB 覆盖优先于默认文件。 */
+  /** 返回合并后的配置（进程内缓存；update 修改 DB 覆盖时失效）。 */
   get(): AnalysisConfig {
+    if (this.cache) return { ...this.cache };
+    const merged = this.build();
+    this.cache = merged;
+    return { ...merged };
+  }
+
+  private build(): AnalysisConfig {
     const merged: AnalysisConfig = { ...this.defaults };
     let rows: { key: string; value: string }[] = [];
     try {
@@ -56,7 +64,7 @@ export class ConfigService {
     return merged;
   }
 
-  /** 覆盖配置：写满 key 即 UPDATE，否则 INSERT。 */
+  /** 覆盖配置：写满 key 即 UPDATE，否则 INSERT；写入后使缓存失效。 */
   update(patch: Partial<AnalysisConfig>): AnalysisConfig {
     const db = this.db.getConnection();
     const upsert = db.prepare(
@@ -69,6 +77,7 @@ export class ConfigService {
         upsert.run(key, JSON.stringify(patch[key]), now);
       }
     }
+    this.cache = null;
     return this.get();
   }
 }

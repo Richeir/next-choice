@@ -107,6 +107,7 @@ describe('LlmService', () => {
     const body = JSON.parse(init.body as string);
     expect(body.model).toBe('gpt-4o-mini');
     expect(body.temperature).toBe(baseConfig.temperature);
+    expect(body.response_format).toEqual({ type: 'json_object' });
     const userMsg = body.messages.find((m: { role: string }) => m.role === 'user').content;
     expect(userMsg).toContain('股票');
     expect(userMsg).toContain('{"code":"sh.600000"}');
@@ -157,6 +158,40 @@ describe('LlmService', () => {
     expect(result).toEqual({
       trend: 70, momentum: 60, valuation: 55, volume: 65, stability: 50, reason: 'ok',
     });
+    restore();
+  });
+});
+
+describe('LlmService 重试策略', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.useRealTimers();
+  });
+
+  it('4xx（非 429）不可重试：直接返回 null，只调用一次', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+    }) as unknown as typeof fetch;
+
+    const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
+    await expect(service.analyze(context)).resolves.toBeNull();
+    expect(global.fetch as unknown as jest.Mock).toHaveBeenCalledTimes(1);
+    restore();
+  });
+
+  it('429 限流：按 maxRetries 重试后返回 null', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+    }) as unknown as typeof fetch;
+
+    const { service, restore } = makeService({ LLM_API_KEY: 'sk-test' });
+    await expect(service.analyze(context)).resolves.toBeNull();
+    // 初始 1 次 + maxRetries 次重试
+    expect(global.fetch as unknown as jest.Mock).toHaveBeenCalledTimes(3);
     restore();
   });
 });

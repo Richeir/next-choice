@@ -55,3 +55,30 @@ describe('TechnicalAnalysisService', () => {
     expect(service.analyze(falling).trend).toBe('空头');
   });
 });
+
+describe('TechnicalAnalysisService MA60 数据不足降级', () => {
+  const service = new TechnicalAnalysisService();
+
+  it('21~59 根时 MA60 为 null，趋势降级用 MA5/MA20 判断并给出正评分', () => {
+    const r = service.analyze(risingSeries(40));
+    expect(r.ma60).toBeNull();
+    expect(r.ma5).not.toBeNull();
+    expect(r.ma20).not.toBeNull();
+    expect(r.trend).toBe('多头'); // 上升序列 → MA5 > MA20
+    expect(r.score).toBeGreaterThan(0);
+  });
+
+  it('下跌且仅 40 根时降级为空头', () => {
+    const falling: KlinePoint[] = [];
+    for (let i = 0; i < 40; i++) {
+      falling.push({
+        date: `2024-01-${String((i % 28) + 1).padStart(2, '0')}`,
+        close: 100 - i * 0.1,
+        volume: 1_000_000,
+      });
+    }
+    const r = service.analyze(falling);
+    expect(r.ma60).toBeNull();
+    expect(r.trend).toBe('空头');
+  });
+});

@@ -1,5 +1,13 @@
+import * as path from 'path';
+import { NotFoundException } from '@nestjs/common';
 import { AnalysisService } from './analysis.service';
+import { AnalysisRepository } from './analysis.repository';
 import { TechnicalAnalysisService } from './technical-analysis.service';
+import { LlmService, LlmResult } from './llm.service';
+import { KlineRepository, SecurityType } from '../kline/kline.repository';
+import { ConfigService } from '../../config/config.service';
+import { JobManagerService } from '../../jobs/job-manager.service';
+import { DatabaseService } from '../../database/database.service';
 
 /** 构造一个便于断言的技术面结果：趋势多头，dims 与 trend 可自由指定。 */
 function makeTechnical(
@@ -55,6 +63,7 @@ describe('AnalysisService.mergeLlm', () => {
     expect(r.isWorthBuying).toBe(1);
     expect(r.holdDays).toBeGreaterThan(0);
     expect(r.llmAnalysis).toBe('详细分析');
+    expect(r.dims).toEqual({ trend: 100, momentum: 100, valuation: 100, volume: 100, stability: 100 });
   });
 
   it('LLM 为 null 时降级用 technical.dims，score/rating/signal 与降级分一致', () => {
@@ -66,6 +75,7 @@ describe('AnalysisService.mergeLlm', () => {
     expect(r.isWorthBuying).toBe(0);
     expect(r.holdDays).toBe(22); // 趋势多头，持有天数 = round(10 + 57.5/100*20)
     expect(r.llmAnalysis).toBeNull();
+    expect(r.dims).toEqual({ trend: 80, momentum: 50, valuation: 50, volume: 50, stability: 50 }); // 降级用技术面维度分
   });
 
   it('LLM 高分但技术面空头时不会触发 BUY（信号方向以技术面均线为准）', () => {
@@ -98,5 +108,173 @@ describe('AnalysisService.mergeLlm', () => {
     // 一致性：rating/signal 都能由 score 推出
     expect(fallbackPath.rating).toBe('A');
     expect(fallbackPath.signal).toBe('HOLD');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execute / trigger / getJob 集成测试（内存 SQLite + 真实 schema）
+// ---------------------------------------------------------------------------
+const SCHEMA = path.join(__dirname, '..', '..', '..', 'database', 'schema.sql');
+
+function makeConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    get: () => ({
+      model: 'gpt-4o',
+      promptTemplate: '模板 {{securityType}} {{basicInfo}} {{klineSummary}} {{technicalIndicators}}',
+      timeoutMs: 1000,
+      maxRetries: 2,
+      klineLimit: 120,
+      temperature: 0.2,
+      updatedAt: null,
+      ...overrides,
+    }),
+  } as unknown as ConfigService;
+}
+
+/** 构造含 60 根日 K 的标的（最后交易日 2024-02-29）。 */
+function setupExecuteEnv() {
+  const db = new DatabaseService({ path: ':memory:', schemaPath: SCHEMA });
+  const conn = db.getConnection();
+  conn.prepare(`INSERT INTO stock_info (code, last_trade_date) VALUES ('sh.600000', '2024-02-29')`).run();
+  const insert = conn.prepare(
+    `INSERT INTO stock_kline_daily
+       (date, code, open, high, low, close, preclose, volume, amount, adjustflag,
+        turn, tradestatus, pctChg, isST)
+     VALUES (?, 'sh.600000', 10, 10, 10, ?, 10, 1000000, 0, '2', 0, '1', 0, '0')`,
+  );
+  const base = new Date('2024-01-01T00:00:00Z');
+  for (let i = 0; i < 60; i++) {
+    const d = new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+    insert.run(d, 10 + i * 0.1);
+  }
+  const analysisRepo = new AnalysisRepository(db);
+  const klineRepo = new KlineRepository(db);
+  return { db, conn, analysisRepo, klineRepo };
+}
+
+function makeExecuteService(options: { llmResult?: LlmResult | null } = {}) {
+  const { db, conn, analysisRepo, klineRepo } = setupExecuteEnv();
+  const llm = {
+    analyze: jest.fn().mockResolvedValue(options.llmResult ?? null),
+  } as unknown as LlmService;
+  const service = new AnalysisService(
+    analysisRepo,
+    new TechnicalAnalysisService(),
+    llm,
+    klineRepo,
+    {} as never,
+    makeConfig(),
+  );
+  const execute = (service as unknown as {
+    execute: (type: SecurityType, code: string) => Promise<unknown>;
+  }).execute.bind(service);
+  return { service, db, conn, llm, execute };
+}
+
+describe('AnalysisService.execute', () => {
+  it('分析日期取最后交易日（最后一行 K 线），非 UTC 当天', async () => {
+    const { execute, conn } = makeExecuteService({
+      llmResult: {
+        trend: 70,
+        momentum: 60,
+        valuation: 55,
+        volume: 65,
+        stability: 50,
+      },
+    });
+    await execute('stock', 'sh.600000');
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    expect(String(row.date)).toBe('2024-02-29');
+  });
+
+  it('LLM 路径落库 dims/model/prompt_version，reason 追加进 note', async () => {
+    const { execute, conn } = makeExecuteService({
+      llmResult: {
+        trend: 70,
+        momentum: 60,
+        valuation: 55,
+        volume: 65,
+        stability: 50,
+        reason: '估值合理，趋势向好',
+      },
+    });
+    await execute('stock', 'sh.600000');
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    expect(JSON.parse(row.dims as string)).toEqual({ trend: 70, momentum: 60, valuation: 55, volume: 65, stability: 50 });
+    expect(row.model).toBe('gpt-4o');
+    expect(String(row.prompt_version)).toMatch(/^[0-9a-f]{8}$/);
+    expect(String(row.note)).toContain('趋势向好'); // reason → note
+    expect(String(row.note)).toContain('综合评分'); // 技术指标摘要仍在
+    expect(row.llm_analysis).toBe('估值合理，趋势向好'); // llmAnalysis 缺失时 reason 兜底进 llm_analysis
+  });
+
+  it('LLM 不可用时降级：model/prompt_version 为 null，dims 为技术面维度分', async () => {
+    const { execute, conn, llm } = makeExecuteService(); // llmResult = null
+    await execute('stock', 'sh.600000');
+    expect(llm.analyze).toHaveBeenCalled();
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    expect(row.model).toBeNull();
+    expect(row.prompt_version).toBeNull();
+    const dims = JSON.parse(row.dims as string) as Record<string, number>;
+    expect(dims).toHaveProperty('trend');
+    expect(dims).toHaveProperty('stability');
+    expect(row.note).toBeTruthy();
+  });
+});
+
+describe('AnalysisService.trigger / getJob', () => {
+  it('trigger 对同一标的中途去重；getJob 返回任务状态', async () => {
+    const { db, analysisRepo, klineRepo } = setupExecuteEnv();
+    const llm = {
+      analyze: jest.fn().mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        return {
+          trend: 70,
+          momentum: 60,
+          valuation: 55,
+          volume: 65,
+          stability: 50,
+          reason: 'ok',
+        };
+      }),
+    } as unknown as LlmService;
+    const jobs = new JobManagerService(db);
+    const service = new AnalysisService(
+      analysisRepo,
+      new TechnicalAnalysisService(),
+      llm,
+      klineRepo,
+      jobs,
+      makeConfig(),
+    );
+    const r1 = service.trigger('stock', 'sh.600000');
+    const r2 = service.trigger('stock', 'sh.600000');
+    expect(r2.jobId).toBe(r1.jobId); // per-code 去重
+
+    // 等待任务完成（轮询 DB 状态）
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      const row = db
+        .getConnection()
+        .prepare(`SELECT status FROM analysis_jobs WHERE id = ?`)
+        .get(r1.jobId) as { status: string };
+      if (row.status === 'done' || row.status === 'failed') break;
+      if (Date.now() > deadline) throw new Error('job timeout');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(llm.analyze).toHaveBeenCalledTimes(1); // 去重后只执行一次
+    expect(service.getJob(r1.jobId).status).toBe('done');
+  });
+
+  it('getJob 对未知 id 抛 NotFoundException（而非假 failed）', () => {
+    const service = new AnalysisService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { get: () => undefined } as never,
+      {} as never,
+    );
+    expect(() => service.getJob('no-such-job')).toThrow(NotFoundException);
   });
 });

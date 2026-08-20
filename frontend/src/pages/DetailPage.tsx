@@ -170,9 +170,12 @@ export default function DetailPage({ kind }: { kind: Kind }) {
         let job;
         try {
           job = await getJob(jobId);
-        } catch {
-          // 任务不存在/已失效（如服务重启后 job 记录被清理）：结束轮询，提示重新触发
-          return { notFound: true };
+        } catch (e) {
+          // 仅任务不存在（404）时结束轮询；网络等其他错误交由 startAnalysis 提示
+          if (e instanceof Error && /not found/i.test(e.message)) {
+            return { notFound: true };
+          }
+          throw e;
         }
         if (job.status === 'done' || job.status === 'failed') return job;
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));

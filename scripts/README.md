@@ -103,10 +103,14 @@ python llm_backfill.py --db ../data/market.db --dry-run
 | `--base-url` | `LLM_BASE_URL` | LLM 端点地址，默认 `https://api.openai.com/v1` |
 | `--model` | `LLM_MODEL` / `gpt-4o` | LLM 模型名 |
 | `--timeout-ms` | `60000` | 单次 LLM 调用超时毫秒 |
+| `--max-retries` | `2` | 单标的 LLM 调用重试次数（指数退避，与后端 `LlmService.maxRetries` 对齐） |
 
 **回填规则（防 LLM 幻觉覆盖）**：与后端原实现一致——仅回填空字段（已有值不覆盖）；
 入库前校验（字符串非空且限长 `industry/category<=100`、`fullName/manager<=200`；数值有限非负、
-52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯。单只失败记 warning 不中断整体。
+52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯（UTC 毫秒 `Z` 后缀，与后端
+`new Date().toISOString()` 同格式）。LLM 调用失败（网络抖动 / 瞬时 429）指数退避重试
+（429 起步 500ms、其余 200ms、封顶 2s）；4xx 除 429 为不可重试错误直接放弃。
+单只重试耗尽仍失败记 warning 不中断整体。
 
 ## 流程
 
@@ -187,4 +191,4 @@ python -m pytest tests -q
 - `tests/test_fetch_incremental.py`：`--incremental` 增量模式：起始日期 / 频率门控 /
   跳过与标记逻辑（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证
-- `tests/test_llm_backfill.py`：`llm_backfill` 缺失字段识别 / 校验 / 回填（临时库，mock LLM）
+- `tests/test_llm_backfill.py`：`llm_backfill` 缺失字段识别 / 校验 / 回填 / 重试 / CLI 端到端（临时库，mock LLM / urlopen，不打网络）

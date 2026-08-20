@@ -9,6 +9,8 @@ ETF：category/manager/fund_scale）通过 LLM 补齐，不影响分析打分任
 - 仅回填空字段：目标列已有值（非 NULL / 非空串）不覆盖。
 - 入库前校验：字符串非空且限长；数值有限非负（52 周高低须为正）。
 - 每次回填写入 llm_backfill_at 时间戳，便于追溯。
+- LLM 调用失败（网络抖动 / 瞬时 429）指数退避重试，默认 2 次（同后端
+  maxRetries）；4xx 除 429 不可重试。可用 --max-retries 调整。
 
 用法示例：
     # 补齐 A 股缺失字段（默认 both，可用 --type stock/etf 限定）
@@ -26,9 +28,10 @@ import logging
 import os
 import sqlite3
 import sys
-import urllib.request
+import time
 import urllib.error
-from datetime import datetime
+import urllib.request
+from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +62,11 @@ MAX_STRLEN = {"industry": 100, "fullName": 200, "category": 100, "manager": 200}
 
 def _is_empty(value):
     return value is None or value == ""
+
+
+def _now_utc_iso():
+    """UTC 毫秒 + Z 后缀，与后端 new Date().toISOString() 同格式（便于对齐追溯）。"""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _validate(src, value):
@@ -96,25 +104,19 @@ def missing_targets(conn, security_type, codes=None):
     """返回（code, code_name, 缺失字段 json 键列表）列表。"""
     mapping = LLM_FIELDS[security_type]
     table = "stock_info" if security_type == "stock" else "etf_info"
-    placeholders = " OR ".join(f'("{col}" IS NULL OR "{col}" = \'\')' for col in mapping.values())
-    sql = f'SELECT code, code_name FROM {table} WHERE ({placeholders})'
+    cols = list(mapping.values())
+    placeholders = " OR ".join(f'("{col}" IS NULL OR "{col}" = \'\')' for col in cols)
+    # 一次查回字段列，避免对每行二次 SELECT（先粗筛再按行补全缺失判断）
+    sql = f'SELECT code, code_name, {", ".join(cols)} FROM {table} WHERE ({placeholders})'
     params = []
     if codes:
         qs = ", ".join("?" for _ in codes)
         sql += f" AND code IN ({qs})"
         params = list(codes)
     rows = conn.execute(sql, params).fetchall()
-    # 只保留确实缺失（NULL/空）的字段
     result = []
     for row in rows:
-        cur = conn.execute(
-            f'SELECT {", ".join(mapping.values())} FROM {table} WHERE code = ?',
-            (row["code"],),
-        ).fetchone()
-        missing = [
-            src for src, col in mapping.items()
-            if _is_empty(cur[col])
-        ]
+        missing = [src for src, col in mapping.items() if _is_empty(row[col])]
         if missing:
             result.append({"code": row["code"], "code_name": row["code_name"],
                            "missing": missing})
@@ -136,18 +138,31 @@ def build_prompt(security_type, code, code_name, missing):
         "fundScale": "基金规模（元，数值）",
     }
     fields = "\n".join(f"- {src}: {fields_desc[src]}" for src in missing)
+    # code_name 为空（如仅存 code 的标的）时以 code 兜底，避免提示词出现 "None" 误导 LLM
+    name = code_name or code
     return (
         f"你是一位严谨的证券信息补全助手。请根据证券代码与名称，尽可能准确补全以下"
         f"缺失的基础信息字段，切勿编造无法合理推断的数值（如无把握可省略该项）。\n\n"
-        f"## 标的信息\n- 类型：{label}\n- 代码：{code}\n- 名称：{code_name}\n\n"
+        f"## 标的信息\n- 类型：{label}\n- 代码：{code}\n- 名称：{name}\n\n"
         f"## 需补全字段（仅这些字段，缺失项可省略）\n{fields}\n\n"
         f"## 输出要求\n严格输出一个 JSON 对象，不要包含多余文字或 Markdown 代码块。\n"
         f"直接输出 JSON 即可。"
     )
 
 
-def call_llm(prompt, base_url, model, api_key, timeout_ms):
-    """调用 OpenAI 兼容端点，返回解析后的 JSON 对象；失败抛异常。"""
+# 指数退避（对齐后端 LlmService.backoffMs）：429 起步更久，其余 200ms，封顶 2s
+def backoff_ms(attempt, rate_limited):
+    base = 500 if rate_limited else 200
+    return min(2000, base * 2 ** attempt)
+
+
+def call_llm(prompt, base_url, model, api_key, timeout_ms, max_retries=2):
+    """调用 OpenAI 兼容端点，返回解析后的 JSON 对象。
+
+    网络抖动 / 瞬时 429 指数退避重试（对齐后端 LlmService.maxRetries=2）：
+    429 起步 500ms、其余 200ms、封顶 2s；4xx（除 429）为不可重试错误直接抛错。
+    全部重试仍失败则抛出原始异常。
+    """
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = json.dumps({
         "model": model,
@@ -163,10 +178,27 @@ def call_llm(prompt, base_url, model, api_key, timeout_ms):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     })
-    with urllib.request.urlopen(req, timeout=timeout_ms / 1000.0) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    content = data["choices"][0]["message"]["content"]
-    return json.loads(content)
+    for attempt in range(max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_ms / 1000.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            content = data["choices"][0]["message"]["content"]
+            return json.loads(content)
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500 and exc.code != 429:
+                raise  # 请求类错误（鉴权/参数等）重试无意义
+            if attempt >= max_retries:
+                raise
+            delay = backoff_ms(attempt, rate_limited=exc.code == 429)
+            log.info("LLM 调用失败（HTTP %d），约 %d ms 后重试", exc.code, delay)
+            time.sleep(delay)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt >= max_retries:
+                raise
+            delay = backoff_ms(attempt, rate_limited=False)
+            log.info("LLM 调用失败（%s），约 %d ms 后重试", exc, delay)
+            time.sleep(delay)
+    raise RuntimeError("call_llm 循环不应结束")  # 重试耗尽时已在循环内抛出
 
 
 def backfill_one(conn, security_type, target, llm_obj):
@@ -191,14 +223,15 @@ def backfill_one(conn, security_type, target, llm_obj):
     if not sets:
         return 0
     sets.append("llm_backfill_at = ?")
-    params.append(datetime.now().astimezone().isoformat())
+    params.append(_now_utc_iso())
     params.append(target["code"])
     conn.execute(f'UPDATE {table} SET {", ".join(sets)} WHERE code = ?', params)
     conn.commit()
     return len(sets) - 1  # 减去 llm_backfill_at
 
 
-def run(conn, security_type, codes, limit, base_url, model, api_key, timeout_ms):
+def run(conn, security_type, codes, limit, base_url, model, api_key, timeout_ms,
+        max_retries=2):
     """执行补齐任务，返回 (处理数, 成功回填字段数)。"""
     handled = 0
     filled = 0
@@ -208,7 +241,7 @@ def run(conn, security_type, codes, limit, base_url, model, api_key, timeout_ms)
     for i, t in enumerate(targets, 1):
         try:
             prompt = build_prompt(security_type, t["code"], t["code_name"], t["missing"])
-            llm_obj = call_llm(prompt, base_url, model, api_key, timeout_ms)
+            llm_obj = call_llm(prompt, base_url, model, api_key, timeout_ms, max_retries)
             n = backfill_one(conn, security_type, t, llm_obj)
             filled += 1 if n else 0
             handled += 1
@@ -238,6 +271,9 @@ def build_parser():
                         help="LLM 模型名，默认 gpt-4o（可用 LLM_MODEL 覆盖）")
     parser.add_argument("--timeout-ms", type=int, default=60000,
                         help="单次 LLM 调用超时毫秒，默认 60000")
+    parser.add_argument("--max-retries", type=int, default=2,
+                        help="单标的 LLM 调用重试次数（指数退避，429 起步更久），"
+                             "默认 2（与后端 LlmService.maxRetries 对齐）")
     return parser
 
 
@@ -264,7 +300,8 @@ def main(argv=None):
             total_handled += len(targets)
             continue
         handled, filled = run(conn, security_type, codes, args.limit,
-                              args.base_url, args.model, api_key, args.timeout_ms)
+                              args.base_url, args.model, api_key, args.timeout_ms,
+                              args.max_retries)
         total_handled += handled
         total_filled += filled
     log.info("完成：处理 %d 个标的，成功回填 %d 只有值变更",

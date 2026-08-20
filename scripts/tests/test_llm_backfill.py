@@ -1,10 +1,38 @@
-"""llm_backfill 模块单元测试：缺失字段识别 / 校验 / 回填，不打网络。"""
+"""llm_backfill 模块单元测试：缺失字段识别 / 校验 / 回填 / 重试，不打网络。"""
+import json
+import re
 import sqlite3
+import urllib.error
 
 import pytest
 
 import llm_backfill
 from conftest import SCHEMA
+
+UTC_ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+
+
+def _fake_urlopen_response(obj):
+    """构造 urllib urlopen 成功响应替身：read() 返回含 LLM JSON 的 OpenAI 响应体。"""
+    body = json.dumps(
+        {"choices": [{"message": {"content": json.dumps(obj, ensure_ascii=False)}}]}
+    ).encode("utf-8")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return body
+
+    return _Resp()
+
+
+def _http_error(req, code, msg="err"):
+    return urllib.error.HTTPError(req.full_url, code, msg, {}, None)
 
 
 def _conn(tmp_path):
@@ -85,6 +113,17 @@ class TestMissingTargets:
         assert len(targets) == 1
         assert targets[0]["code"] == "sh.600001"
 
+    def test_single_query_not_per_row(self, conn):
+        for i in range(10):
+            conn.execute("INSERT INTO stock_info (code) VALUES (?)", (f"sh.6000{i:02d}",))
+        seen = []
+        conn.set_trace_callback(lambda sql: seen.append(sql))
+        targets = llm_backfill.missing_targets(conn, "stock")
+        conn.set_trace_callback(None)
+        selects = [s for s in seen if s.lstrip().startswith("SELECT")]
+        assert len(targets) == 10
+        assert len(selects) == 1  # 字段列随主查询一次返回，无每行二次 SELECT
+
 
 class TestBackfillOne:
     def test_only_fills_empty_and_writes_timestamp(self, conn):
@@ -146,6 +185,15 @@ class TestBackfillOne:
         assert row["llm_backfill_at"]
         assert n == 3
 
+    def test_timestamp_uses_utc_z_format(self, conn):
+        conn.execute("INSERT INTO stock_info (code) VALUES ('sh.600000')")
+        target = {"code": "sh.600000", "code_name": "测试", "missing": ["industry"]}
+        llm_backfill.backfill_one(conn, "stock", target, {"industry": "银行"})
+        row = conn.execute("SELECT * FROM stock_info WHERE code='sh.600000'").fetchone()
+        # 与后端 new Date().toISOString()（UTC + 'Z'）同格式，便于对齐追溯
+        assert UTC_ISO_RE.fullmatch(row["llm_backfill_at"])
+        assert "+" not in row["llm_backfill_at"]
+
 
 class TestBuildPrompt:
     def test_includes_missing_fields(self):
@@ -155,6 +203,16 @@ class TestBuildPrompt:
         assert "industry" in prompt
         assert "pb" in prompt
         assert "category" not in prompt
+
+    def test_code_name_none_falls_back_to_code(self):
+        prompt = llm_backfill.build_prompt("stock", "sh.600000", None, ["industry"])
+        assert "None" not in prompt
+        assert "sh.600000" in prompt
+
+    def test_code_name_blank_falls_back_to_code(self):
+        prompt = llm_backfill.build_prompt("etf", "sh.510010", "", ["category"])
+        assert "None" not in prompt
+        assert "sh.510010" in prompt
 
 
 class TestRun:
@@ -183,3 +241,117 @@ class TestRun:
         handled, filled = llm_backfill.run(conn, "stock", None, 10, "url", "model", "key", 1000)
         assert handled == 1
         assert filled == 1
+
+    def test_run_passes_max_retries(self, conn, monkeypatch):
+        conn.execute("INSERT INTO stock_info (code) VALUES ('sh.600000')")
+        seen = {}
+        def fake_call(prompt, *args, **kwargs):
+            seen["args"] = args
+            return {"industry": "银行"}
+        monkeypatch.setattr(llm_backfill, "call_llm", fake_call)
+        llm_backfill.run(conn, "stock", None, 10, "url", "model", "key", 1000, max_retries=5)
+        assert seen["args"][-1] == 5
+
+
+class TestBackoffMs:
+    def test_ratelimited_starts_higher(self):
+        assert llm_backfill.backoff_ms(0, rate_limited=True) == 500
+        assert llm_backfill.backoff_ms(0, rate_limited=False) == 200
+
+    def test_exponential_with_cap(self):
+        assert llm_backfill.backoff_ms(1, rate_limited=True) == 1000
+        assert llm_backfill.backoff_ms(2, rate_limited=True) == 2000  # 封顶 2s
+        assert llm_backfill.backoff_ms(4, rate_limited=False) == 2000
+
+
+class TestCallLlm:
+    def test_success(self, monkeypatch):
+        calls = {"n": 0}
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            return _fake_urlopen_response({"industry": "银行"})
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        got = llm_backfill.call_llm("p", "http://x/v1", "m", "k", 1000)
+        assert got == {"industry": "银行"}
+        assert calls["n"] == 1
+
+    def test_retries_429_then_succeeds(self, monkeypatch):
+        calls = {"n": 0}
+        sleeps = []
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _http_error(req, 429)
+            return _fake_urlopen_response({"industry": "银行"})
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(llm_backfill.time, "sleep", sleeps.append)
+        got = llm_backfill.call_llm("p", "http://x/v1", "m", "k", 1000)
+        assert got == {"industry": "银行"}
+        assert calls["n"] == 2
+        assert sleeps == [500]  # 429 首退避 500ms
+
+    def test_retries_on_urlerror(self, monkeypatch):
+        calls = {"n": 0}
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise urllib.error.URLError("refused")
+            return _fake_urlopen_response({"industry": "银行"})
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(llm_backfill.time, "sleep", lambda s: None)
+        got = llm_backfill.call_llm("p", "http://x/v1", "m", "k", 1000)
+        assert calls["n"] == 2
+
+    def test_non_429_4xx_not_retried(self, monkeypatch):
+        calls = {"n": 0}
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            raise _http_error(req, 401)
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(llm_backfill.time, "sleep", lambda s: None)
+        with pytest.raises(urllib.error.HTTPError):
+            llm_backfill.call_llm("p", "http://x/v1", "m", "k", 1000, max_retries=3)
+        assert calls["n"] == 1  # 鉴权类错误重试无意义
+
+    def test_exhausts_retries_after_max_retries(self, monkeypatch):
+        calls = {"n": 0}
+        sleeps = []
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            raise _http_error(req, 503)
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(llm_backfill.time, "sleep", sleeps.append)
+        with pytest.raises(urllib.error.HTTPError):
+            llm_backfill.call_llm("p", "http://x/v1", "m", "k", 1000, max_retries=2)
+        assert calls["n"] == 3  # 1 次尝试 + 2 次重试
+        assert sleeps == [200, 400]  # 503 非 429：200ms 起步，指数退避
+
+
+class TestCliRoundTrip:
+    """mock LLM 的 CLI 端到端：main() 全链路（缺识别 -> LLM -> 校验 -> 回填）。"""
+
+    def test_main_backfills_stock(self, tmp_path, monkeypatch):
+        db = tmp_path / "cli.db"
+        conn = sqlite3.connect(db)
+        with open(SCHEMA, "r", encoding="utf-8") as f:
+            conn.executescript(f.read())
+        conn.execute("INSERT INTO stock_info (code) VALUES ('sh.600000')")
+        conn.commit()
+
+        monkeypatch.setenv("LLM_API_KEY", "sk-test")
+        calls = {"n": 0}
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            return _fake_urlopen_response({"industry": "银行", "pb": 0.8})
+        monkeypatch.setattr(llm_backfill.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(llm_backfill.time, "sleep", lambda s: None)
+
+        llm_backfill.main(["--db", str(db), "--type", "stock"])
+        assert calls["n"] == 1
+
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM stock_info WHERE code='sh.600000'").fetchone()
+        conn.close()
+        assert row["industry"] == "银行"
+        assert row["pb"] == 0.8
+        assert UTC_ISO_RE.fullmatch(row["llm_backfill_at"])

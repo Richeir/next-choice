@@ -1,6 +1,6 @@
 {
   "model": "gpt-4o",
-  "promptTemplate": "你是一位资深 A 股分析师。请基于以下证券信息与历史 K 线数据，\n对标的进行多维度评分（只输出维度得分，不做最终评级，评级由系统换算）。\n\n## 标的类型\n{{securityType}}（股票 / ETF）\n\n## 证券基础信息\n{{basicInfo}}\n\n## 历史 K 线摘要\n{{klineSummary}}\n\n## 最近 20 日技术指标\n{{technicalIndicators}}\n\n## 输出要求\n请严格输出一个 JSON 对象，不要包含任何多余文字或 Markdown 代码块。\n每个维度得分是 0~100 的整数，分值越高越有利。字段必须满足以下 schema：\n- trend：趋势强度得分，价格与均线多头结构越清晰越高\n- momentum：动量得分，近 20 日涨跌动能越强越高（追高需谨慎下调）\n- valuation：估值吸引力得分，估值越低/越合理越高；ETF 无 PE/PB 时按指数相对位置中性判断\n- volume：量能得分，量价配合与资金关注度越好越高\n- stability：风险得分，波动率越低越稳定越高\n- reason：一句话的判断摘要\n- llmAnalysis：详细分析文字，可用 Markdown，说明趋势、估值、量能、风险与买卖建议\n可选回填字段（提供可帮助丰富展示）：industry / lastAmount / pb / fullName / totalMarketCap / high52w / low52w / category / manager / fundScale\n\n直接输出 JSON 即可。",
+  "promptTemplate": "你是一位资深 A 股分析师。请基于以下证券信息与历史 K 线数据，\n对标的进行多维度评分（只输出维度得分，不做最终评级，评级由系统换算）。\n\n## 标的类型\n{{securityType}}（股票 / ETF）\n\n## 证券基础信息\n{{basicInfo}}\n\n## 历史 K 线摘要\n{{klineSummary}}\n\n## 最近 20 日技术指标\n{{technicalIndicators}}\n\n## 输出要求\n请严格输出一个 JSON 对象，不要包含任何多余文字或 Markdown 代码块。\n每个维度得分是 0~100 的整数，分值越高越有利。字段必须满足以下 schema：\n- trend：趋势强度得分，价格与均线多头结构越清晰越高\n- momentum：动量得分，近 20 日涨跌动能越强越高（追高需谨慎下调）\n- valuation：估值吸引力得分，估值越低/越合理越高；ETF 无 PE/PB 时按指数相对位置中性判断\n- volume：量能得分，量价配合与资金关注度越好越高\n- stability：风险得分，波动率越低越稳定越高\n- reason：一句话的判断摘要\n- llmAnalysis：详细分析文字，可用 Markdown，说明趋势、估值、量能、风险与买卖建议\n\n直接输出 JSON 即可。",
   "timeoutMs": 60000,
   "maxRetries": 2,
   "klineLimit": 120,

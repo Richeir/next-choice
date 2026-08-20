@@ -64,7 +64,8 @@ adjust_factor  复权因子
 
 ### 4.1 股票基础信息 `stock_info`
 
-记录股票（`type='1'`）的基础信息。基础字段来自 `query_stock_basic`；部分字段由脚本从 K 线回填，其余（行业、成交额、市净率、公司全称、市值、52 周高低）由 LLM 分析时填充。与 K 线表通过 `code` 关联：
+记录股票（`type='1'`）的基础信息。基础字段来自 `query_stock_basic`；部分字段由脚本从 K 线回填，其余（行业、成交额、市净率、公司全称、市值、52 周高低）由独立 LLM 补齐脚本
+（`scripts/llm_backfill.py`）填充，与分析打分解耦。与 K 线表通过 `code` 关联：
 
 ```sql
 CREATE TABLE IF NOT EXISTS stock_info (
@@ -95,7 +96,7 @@ CREATE TABLE IF NOT EXISTS stock_info (
 >
 > **行情字段来源（区分脚本回填 vs LLM 填充）**：
 > - **脚本可回填（来自 `query_history_k_data_plus` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`）、`pe_ttm`（`peTTM`），取每个 `code` 日期最大的那一行。
-> - **由 LLM 分析时填充（BaoStock 无法直接获取）**：`industry`（所属行业）、`last_amount`（成交额）、`pb`、`full_name`（公司全称）、`total_market_cap`（总市值）、`high_52w`（52 周最高）、`low_52w`（52 周最低）。这些字段为**可空**，未填充前为 `NULL`。
+> - **由独立 LLM 脚本补齐（BaoStock 无法直接获取）**：`industry`（所属行业）、`last_amount`（成交额）、`pb`、`full_name`（公司全称）、`total_market_cap`（总市值）、`high_52w`（52 周最高）、`low_52w`（52 周最低）。这些字段为**可空**，未填充前为 `NULL`；由 `scripts/llm_backfill.py` 在分析任务之外独立补齐。
 >
 > **LLM 回填规则（防幻觉覆盖）**：仅回填空字段（目标列已有值不覆盖）；入库前校验（字符串非空且限长、数值有限且非负、52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯。
 
@@ -127,7 +128,7 @@ CREATE TABLE IF NOT EXISTS etf_info (
 >
 > **行情字段来源（区分脚本回填 vs LLM 填充）**：
 > - **脚本可回填（来自 `etf_kline_daily` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`），取每个 `code` 日期最大的那一行。`last_close` 同时作为 ETF 的 **NAV**（净值）。与股票一致，无需 LLM。
-> - **由 LLM 分析时填充（BaoStock 无法直接获取）**：`category`（类别：宽基/行业/主题/策略/跨境/债券）、`manager`（管理人）、`fund_scale`（基金规模，入库时建议统一口径如元 / 亿元 / 份额数）。
+> - **由独立 LLM 脚本补齐（BaoStock 无法直接获取）**：`category`（类别：宽基/行业/主题/策略/跨境/债券）、`manager`（管理人）、`fund_scale`（基金规模，入库时建议统一口径如元 / 亿元 / 份额数）；由 `scripts/llm_backfill.py` 独立补齐。
 > - 这些字段为**可空**，未填充前为 `NULL`；回填规则与股票一致（仅空字段 + 校验 + `llm_backfill_at`）。
 
 ## 5. K 线表结构（6 张）
@@ -531,10 +532,10 @@ JOIN etf_kline_daily k
 
 ## 9. 写入流程建议
 
-1. `login()` → 用 `query_stock_basic` 分批拉取，按 `type` 区分写入 `stock_info`（`type='1'`）与 `etf_info`（`type='5'`）；如需逐日可交易标的，可用 `query_all_stock`。注：`industry` 等字段由后续 LLM 分析时填充（见第 6 步），无需在此通过 `query_stock_industry` 获取。
+1. `login()` → 用 `query_stock_basic` 分批拉取，按 `type` 区分写入 `stock_info`（`type='1'`）与 `etf_info`（`type='5'`）；如需逐日可交易标的，可用 `query_all_stock`。注：`industry` 等字段由独立 LLM 补齐脚本（`scripts/llm_backfill.py`）后续补齐（见第 5、6 步），与分析打分解耦，无需在此通过 `query_stock_industry` 获取。
 2. 对每个标的按 日/周/月 和 前复权(`adjustflag='2'`)/不复权(`'3'`) 分别调用 `query_history_k_data_plus`。
 3. 将返回 `data` 中的 `str` 数值转 `float`，空串转 `NULL`，`INSERT OR REPLACE` 入库。
 4. `commit()` 后可对 `UNIQUE(code, date, adjustflag)` 冲突做 `INSERT OR IGNORE` 增量更新。
-5. 对 `etf_info`：`last_trade_date / last_close / last_pct_chg` 由脚本从 `etf_kline_daily` 回填（见上文示例 SQL）；`category / manager / fund_scale` 由外部 LLM 循环逐条查缺（`category IS NULL` / `fund_scale IS NULL` 等），按 `code` 执行 `UPDATE` 幂等填充。
-6. 对 `stock_info` 中的 `industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`：由外部 LLM 循环逐条查缺，按 `code` 执行 `UPDATE` 幂等填充。
+5. 对 `etf_info`：`last_trade_date / last_close / last_pct_chg` 由脚本从 `etf_kline_daily` 回填（见上文示例 SQL）；`category / manager / fund_scale` 由独立 LLM 补齐脚本 `scripts/llm_backfill.py` 循环逐条查缺（`category IS NULL` / `fund_scale IS NULL` 等），按 `code` 执行 `UPDATE` 幂等填充。
+6. 对 `stock_info` 中的 `industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`：由同上的独立 LLM 补齐脚本循环逐条查缺，按 `code` 执行 `UPDATE` 幂等填充。
 7. 结束后 `logout()`。

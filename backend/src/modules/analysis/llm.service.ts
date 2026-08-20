@@ -16,18 +16,6 @@ export interface LlmResult {
   stability: number;
   reason?: string;
   llmAnalysis?: string;
-  // 回填基础信息表（股票）
-  industry?: string;
-  lastAmount?: number;
-  pb?: number;
-  fullName?: string;
-  totalMarketCap?: number;
-  high52w?: number;
-  low52w?: number;
-  // 回填基础信息表（ETF）
-  category?: string;
-  manager?: string;
-  fundScale?: number;
 }
 
 export interface LlmContext {
@@ -185,16 +173,6 @@ export class LlmService {
       stability: dims.stability,
       reason: typeof o.reason === 'string' ? o.reason : undefined,
       llmAnalysis: typeof o.llmAnalysis === 'string' ? o.llmAnalysis : undefined,
-      ...(typeof o.industry === 'string' ? { industry: o.industry } : {}),
-      ...(typeof o.lastAmount === 'number' ? { lastAmount: o.lastAmount } : {}),
-      ...(typeof o.pb === 'number' ? { pb: o.pb } : {}),
-      ...(typeof o.fullName === 'string' ? { fullName: o.fullName } : {}),
-      ...(typeof o.totalMarketCap === 'number' ? { totalMarketCap: o.totalMarketCap } : {}),
-      ...(typeof o.high52w === 'number' ? { high52w: o.high52w } : {}),
-      ...(typeof o.low52w === 'number' ? { low52w: o.low52w } : {}),
-      ...(typeof o.category === 'string' ? { category: o.category } : {}),
-      ...(typeof o.manager === 'string' ? { manager: o.manager } : {}),
-      ...(typeof o.fundScale === 'number' ? { fundScale: o.fundScale } : {}),
     };
   }
 }

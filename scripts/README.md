@@ -41,6 +41,11 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 # 并按频率门控（见下方「增量更新」节；股票/ETF 同理）
 python fetch_data.py --db ../data/market.db --fetch-stock-kline \
     --freq daily,weekly,monthly --incremental
+
+# 用 LLM 补齐股票 / ETF 缺失的基础信息字段（与后端分析打分分离；
+# 默认补齐全部类型的全部缺失字段，可用 --type / --codes / --limit 限定）
+python llm_backfill.py --db ../data/market.db [--type stock|etf|both] \
+    [--codes sh.600000,sz.159915] [--limit 100] [--dry-run]
 ```
 
 参数说明：
@@ -66,6 +71,46 @@ python fetch_data.py --db ../data/market.db --fetch-stock-kline \
 >
 > 注意：ETF 的 K 线数据范围自 **2026-01-05** 起；股票自 1990-12-19 起。
 > 复权因子表 `adjust_factor` 当前由脚本按需写入（可扩展 `--factors`）。
+
+## LLM 补齐基础信息（`llm_backfill.py`）
+
+与分析打分解耦的独立任务：只负责把 BaoStock 无法直接获取的基础信息字段
+（股票：`industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`；
+ETF：`category / manager / fund_scale`）通过 LLM 补齐写入 `stock_info` / `etf_info`。
+不依赖 BaoStock，只连 SQLite + 调用 LLM。
+
+```bash
+# 需设置 LLM_API_KEY（可用 LLM_BASE_URL / LLM_MODEL 覆盖端点与模型）
+LLM_API_KEY=sk-xxx python llm_backfill.py --db ../data/market.db
+
+# 只补齐 A 股、指定代码、最多 100 只
+python llm_backfill.py --db ../data/market.db --type stock \
+    --codes sh.600000,sz.159915 --limit 100
+
+# 仅预览将补齐的清单（不调用 LLM）
+python llm_backfill.py --db ../data/market.db --dry-run
+```
+
+参数说明：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--db` | `../data/market.db` | SQLite 数据库路径 |
+| `--type` | `both` | 补齐标的类型：`stock` / `etf` / `both` |
+| `--codes` | — | 逗号分隔证券代码（可选，缺省处理全部缺失标的） |
+| `--limit` | — | 最多处理的标的数（可选） |
+| `--dry-run` | — | 仅打印将补齐的清单，不调用 LLM |
+| `--base-url` | `LLM_BASE_URL` | LLM 端点地址，默认 `https://api.openai.com/v1` |
+| `--model` | `LLM_MODEL` / `gpt-4o` | LLM 模型名 |
+| `--timeout-ms` | `60000` | 单次 LLM 调用超时毫秒 |
+| `--max-retries` | `2` | 单标的 LLM 调用重试次数（指数退避，与后端 `LlmService.maxRetries` 对齐） |
+
+**回填规则（防 LLM 幻觉覆盖）**：与后端原实现一致——仅回填空字段（已有值不覆盖）；
+入库前校验（字符串非空且限长 `industry/category<=100`、`fullName/manager<=200`；数值有限非负、
+52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯（UTC 毫秒 `Z` 后缀，与后端
+`new Date().toISOString()` 同格式）。LLM 调用失败（网络抖动 / 瞬时 429）指数退避重试
+（429 起步 500ms、其余 200ms、封顶 2s）；4xx 除 429 为不可重试错误直接放弃。
+单只重试耗尽仍失败记 warning 不中断整体。
 
 ## 流程
 
@@ -146,3 +191,4 @@ python -m pytest tests -q
 - `tests/test_fetch_incremental.py`：`--incremental` 增量模式：起始日期 / 频率门控 /
   跳过与标记逻辑（mock BaoStock）
 - `tests/test_e2e.py`：真实 BaoStock 拉取小样本入库 + 回填的端到端验证
+- `tests/test_llm_backfill.py`：`llm_backfill` 缺失字段识别 / 校验 / 回填 / 重试 / CLI 端到端（临时库，mock LLM / urlopen，不打网络）

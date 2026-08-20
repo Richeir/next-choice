@@ -113,10 +113,6 @@ export class AnalysisService {
       promptVersion: llmResult ? promptVersionOf(config.promptTemplate) : null,
     });
 
-    if (llmResult) {
-      this.analysisRepo.backfillInfo(type, code, llmResult);
-    }
-
     return rowToCamel(this.analysisRepo.getInfo(type, code) ?? {});
   }
 

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import { DatabaseService } from '../../database/database.service';
-import { AnalysisRepository, AnalysisInsert, isValidBackfillValue } from './analysis.repository';
+import { AnalysisRepository, AnalysisInsert } from './analysis.repository';
 
 const SCHEMA = path.join(__dirname, '..', '..', '..', 'database', 'schema.sql');
 
@@ -33,107 +33,6 @@ function makeInsert(overrides: Partial<AnalysisInsert> = {}): AnalysisInsert {
     ...overrides,
   };
 }
-
-describe('isValidBackfillValue', () => {
-  it('字符串须非空且不超长', () => {
-    expect(isValidBackfillValue('industry', '银行')).toBe(true);
-    expect(isValidBackfillValue('industry', '')).toBe(false);
-    expect(isValidBackfillValue('industry', '  ')).toBe(false);
-    expect(isValidBackfillValue('industry', 'x'.repeat(101))).toBe(false);
-    expect(isValidBackfillValue('fullName', 'x'.repeat(200))).toBe(true);
-  });
-
-  it('数值须有限；52 周高低须为正，其余非负', () => {
-    expect(isValidBackfillValue('pb', 1.2)).toBe(true);
-    expect(isValidBackfillValue('pb', -1)).toBe(false);
-    expect(isValidBackfillValue('pb', NaN)).toBe(false);
-    expect(isValidBackfillValue('pb', Infinity)).toBe(false);
-    expect(isValidBackfillValue('high52w', 10)).toBe(true);
-    expect(isValidBackfillValue('high52w', 0)).toBe(false);
-    expect(isValidBackfillValue('low52w', 0.5)).toBe(true);
-  });
-
-  it('非字符串/数值一律拒绝', () => {
-    expect(isValidBackfillValue('industry', 123)).toBe(false);
-    expect(isValidBackfillValue('pb', '1.2')).toBe(false);
-    expect(isValidBackfillValue('pb', null)).toBe(false);
-  });
-});
-
-describe('AnalysisRepository.backfillInfo', () => {
-  it('仅回填空字段：已有值不被 LLM 覆盖，并记录 llm_backfill_at', () => {
-    const { db, repo } = setup();
-    const conn = db.getConnection();
-    conn
-      .prepare(`INSERT INTO stock_info (code, industry, pb) VALUES ('sh.600000', '银行', 1.2)`)
-      .run();
-    repo.backfillInfo('stock', 'sh.600000', {
-      trend: 70,
-      momentum: 60,
-      valuation: 55,
-      volume: 65,
-      stability: 50,
-      industry: '白酒', // 已有值，忽略
-      lastAmount: 9.9e8, // 空，回填
-      pb: 3.5, // 已有值，忽略
-      fullName: '某某股份有限公司', // 空，回填
-    });
-    const row = conn
-      .prepare(`SELECT * FROM stock_info WHERE code = 'sh.600000'`)
-      .get() as Record<string, unknown>;
-    expect(row.industry).toBe('银行');
-    expect(row.pb).toBe(1.2);
-    expect(row.last_amount).toBe(9.9e8);
-    expect(row.full_name).toBe('某某股份有限公司');
-    expect(row.llm_backfill_at).toBeTruthy();
-  });
-
-  it('全部值已被占用或校验不过时只更新时间戳（或直接跳过）', () => {
-    const { db, repo } = setup();
-    const conn = db.getConnection();
-    conn.prepare(`INSERT INTO stock_info (code, industry) VALUES ('sh.600001', '银行')`).run();
-    repo.backfillInfo('stock', 'sh.600001', {
-      trend: 70,
-      momentum: 60,
-      valuation: 55,
-      volume: 65,
-      stability: 50,
-      industry: '白酒', // 已有值
-    });
-    const row = conn
-      .prepare(`SELECT * FROM stock_info WHERE code = 'sh.600001'`)
-      .get() as Record<string, unknown>;
-    expect(row.industry).toBe('银行');
-    expect(row.llm_backfill_at).toBeNull(); // 无有效回填，不更新时间戳
-  });
-
-  it('非法值（负数市值/超长行业/非有限数）不落库，合法字段正常回填', () => {
-    const { db, repo } = setup();
-    const conn = db.getConnection();
-    conn.prepare(`INSERT INTO stock_info (code) VALUES ('sh.600002')`).run();
-    repo.backfillInfo('stock', 'sh.600002', {
-      trend: 70,
-      momentum: 60,
-      valuation: 55,
-      volume: 65,
-      stability: 50,
-      industry: 'x'.repeat(101), // 超长，丢弃
-      pb: -2, // 负数，丢弃
-      high52w: 0, // 52 周高须为正，丢弃
-      fullName: '合法全称', // 有效，回填
-      lastAmount: Number.POSITIVE_INFINITY, // 非有限，丢弃
-    });
-    const row = conn
-      .prepare(`SELECT * FROM stock_info WHERE code = 'sh.600002'`)
-      .get() as Record<string, unknown>;
-    expect(row.industry).toBeNull();
-    expect(row.pb).toBeNull();
-    expect(row.high_52w).toBeNull();
-    expect(row.last_amount).toBeNull();
-    expect(row.full_name).toBe('合法全称');
-    expect(row.llm_backfill_at).toBeTruthy();
-  });
-});
 
 describe('AnalysisRepository.insertAnalysis', () => {
   it('写入分析新列（dims/model/prompt_version）并可重复 UPSERT', () => {

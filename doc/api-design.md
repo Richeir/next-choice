@@ -14,7 +14,7 @@
 - **字段命名**：API 响应统一使用 **camelCase**（如 `lastTradeDate`、`isWorthBuying`），数据库列名使用 snake_case（如 `last_trade_date`），由后端 Service/Repository 层负责转换
 - **字段来源约定**：
   - 基础行情字段（收盘价、涨跌幅、PE、ETF 的 `nav` 等）可由脚本从 BaoStock 回填
-  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale`（ETF）等由 **LLM 分析时填充**，未填充前为 `null`
+  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale`（ETF）等由**独立 LLM 补齐脚本（`scripts/llm_backfill.py`）填充**，未填充前为 `null`
   - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [db-design.md](db-design.md) §6
 
 ## 2. 首页统计
@@ -108,7 +108,7 @@
 ```
 
 > `analysis` 为最新一条分析结果的摘要；未分析过则为 `null`。
-> 其中 `industry` / `lastAmount` / `pb` / `fullName` / `totalMarketCap` / `high52w` / `low52w` 由 LLM 分析时填充，未填充前为 `null`。
+> 其中 `industry` / `lastAmount` / `pb` / `fullName` / `totalMarketCap` / `high52w` / `low52w` 由独立 LLM 补齐脚本填充，未填充前为 `null`。
 
 ### 3.2 `GET /api/etfs`
 
@@ -147,7 +147,7 @@
 }
 ```
 
-> `nav`（净值）= 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由 LLM 分析时填充，未填充前为 `null`。
+> `nav`（净值）= 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由独立 LLM 补齐脚本填充，未填充前为 `null`。
 
 ## 4. 详情页
 
@@ -184,7 +184,7 @@
 
 不存在返回 `404`。
 
-> `fullName` / `industry` / `lastAmount` / `pb` / `totalMarketCap` / `high52w` / `low52w` 由 LLM 分析时填充，未填充前为 `null`。
+> `fullName` / `industry` / `lastAmount` / `pb` / `totalMarketCap` / `high52w` / `low52w` 由独立 LLM 补齐脚本填充，未填充前为 `null`。
 
 ### 4.2 `GET /api/etfs/:code`
 
@@ -208,7 +208,7 @@
 }
 ```
 
-> `nav` = 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由 LLM 分析时填充，未填充前为 `null`。
+> `nav` = 最后交易日收盘价 `last_close`。`category` / `manager` / `fundScale` 由独立 LLM 补齐脚本填充，未填充前为 `null`。
 
 ## 5. 分析相关
 

@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "etf_analysis",
     "adjust_factor",
     "analysis_config",
+    "analysis_jobs",
 }
 
 

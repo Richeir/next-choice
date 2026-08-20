@@ -24,17 +24,7 @@ LLM 的回复必须是严格 JSON，**必填** 5 个维度得分（均 0~100，�
     "volume": { "type": "number", "minimum": 0, "maximum": 100, "description": "量能" },
     "stability": { "type": "number", "minimum": 0, "maximum": 100, "description": "风险（波动低得分高）" },
     "reason": { "type": "string", "description": "判断依据，自然语言摘要" },
-    "llmAnalysis": { "type": "string", "description": "详细分析文字（Markdown）" },
-    "industry": { "type": "string", "description": "所属行业（股票）" },
-    "lastAmount": { "type": "number", "description": "成交额（股票）" },
-    "pb": { "type": "number", "description": "市净率（股票）" },
-    "fullName": { "type": "string", "description": "公司全称（股票）" },
-    "totalMarketCap": { "type": "number", "description": "总市值（股票）" },
-    "high52w": { "type": "number", "description": "52 周最高价（股票）" },
-    "low52w": { "type": "number", "description": "52 周最低价（股票）" },
-    "category": { "type": "string", "description": "ETF 类别（ETF）" },
-    "manager": { "type": "string", "description": "管理人（ETF）" },
-    "fundScale": { "type": "number", "description": "基金规模（ETF）" }
+    "llmAnalysis": { "type": "string", "description": "详细分析文字（Markdown）" }
   }
 }
 ```
@@ -71,27 +61,20 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 
 > 分析表 `date` 取**数据最后交易日**（最后一行日 K 的日期），不使用服务器当前日期，避免 UTC 时区跨日问题；"分析日期"≠"触发日期"。
 
-### 额外回填（info 表，供列表/详情展示）
+### 基础信息补齐（已拆分为独立脚本，与非分析任务解耦）
 
-除分析表外，LLM 在分析时**同时回填**基础信息表，用于列表页展示与排序（BaoStock 无法直接获取这些字段）：
+> **变更（MVP 拆分）**：基础信息表中 BaoStock 无法直接获取的字段（股票
+> `industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`；
+> ETF `category / manager / fund_scale`）**不再由分析任务回填**，改由独立脚本
+> `scripts/llm_backfill.py` 批量补齐。分析接口只负责打分，两者解耦。
 
-| JSON 字段 | 目标列 | 适用标的 |
-|-----------|--------|----------|
-| `industry` | `stock_info.industry` | 股票 |
-| `lastAmount` | `stock_info.last_amount`（成交额） | 股票 |
-| `pb` | `stock_info.pb`（市净率） | 股票 |
-| `fullName` | `stock_info.full_name`（公司全称） | 股票 |
-| `totalMarketCap` | `stock_info.total_market_cap`（总市值） | 股票 |
-| `high52w` / `low52w` | `stock_info.high_52w` / `stock_info.low_52w` | 股票 |
-| `category` | `etf_info.category`（类别） | ETF |
-| `manager` | `etf_info.manager`（管理人） | ETF |
-| `fundScale` | `etf_info.fund_scale`（规模） | ETF |
-
-这些字段为**可空**，未分析（未填充）前为 `NULL`。回填遵循以下规则：
+补齐脚本沿用与原实现一致的规则：
 
 - **仅回填空字段**：目标列已有值（非 NULL / 非空串）时**不覆盖**，防止 LLM 幻觉值覆盖已有可靠数据。
 - **入库前校验**：字符串须非空且限长（industry/category ≤100，fullName/manager ≤200）；数值须有限，`high52w` / `low52w` 须为正，其余非负；校验不过的字段直接丢弃。
 - **来源可追溯**：每次发生回填时写入 `llm_backfill_at` 时间戳，便于识别数据来源与清理。
+
+这些字段为**可空**，未补齐（未填充）前为 `NULL`。
 
 ## 3. 提示词模板
 
@@ -125,7 +108,6 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 - stability：风险得分，波动率越低越稳定越高
 - reason：一句话的判断摘要
 - llmAnalysis：详细分析文字，可用 Markdown，说明趋势、估值、量能、风险与买卖建议
-可选回填字段（提供可帮助丰富展示）：industry / lastAmount / pb / fullName / totalMarketCap / high52w / low52w / category / manager / fundScale
 
 直接输出 JSON 即可。
 ```
@@ -207,8 +189,7 @@ CREATE TABLE IF NOT EXISTS analysis_config (
 5. 解析失败/端点错误则重试（最多 maxRetries 次，指数退避；4xx 非 429 不重试）
 6. 系统按固定权重合成综合分并换算评级/信号/持有天数（口径统一）；reason 追加进 note
 7. 回填 stock_analysis / etf_analysis（字段映射见 §2，分析日期=数据最后交易日，含 dims/model/prompt_version）
-8. 回填基础信息表（仅空字段 + 校验 + llm_backfill_at，见 §2）
-9. LLM 不可用/重试耗尽时降级到纯技术面评分（估值给中性 50），任务仍为 done
+8. LLM 不可用/重试耗尽时降级到纯技术面评分（估值给中性 50），任务仍为 done
 ```
 
 ## 6. 失败与容错

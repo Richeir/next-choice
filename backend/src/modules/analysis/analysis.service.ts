@@ -1,11 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AnalysisRepository } from './analysis.repository';
-import { TechnicalAnalysisService } from './technical-analysis.service';
+import { TechnicalAnalysisService, buildNote } from './technical-analysis.service';
 import { LlmService, LlmContext, LlmResult } from './llm.service';
 import { KlineRepository, SecurityType, KlineQuery } from '../kline/kline.repository';
 import { JobManagerService } from '../../jobs/job-manager.service';
 import { ConfigService } from '../../config/config.service';
 import { rowToCamel } from '../../common/mapper';
+import {
+  compositeScore5,
+  holdDaysFromTrend,
+  isWorthBuying as isWorthBuyingSignal,
+  ratingFromScore,
+  signalFromScore,
+} from '../../common/scoring';
 
 @Injectable()
 export class AnalysisService {
@@ -64,11 +71,21 @@ export class AnalysisService {
 
     const today = new Date().toISOString().slice(0, 10);
     const final = this.mergeLlm(technical, llmResult);
+    // note 的“综合评分”须与入库 score 同源：LLM 路径基于 final.score 重建，避免两套数字并存。
+    const note = llmResult
+      ? buildNote(
+          technical.trend,
+          final.score,
+          technical.momentum20,
+          technical.volatility20,
+          technical.volumeRatio,
+        )
+      : technical.note;
 
     this.analysisRepo.insertAnalysis(type, code, {
       date: today,
-      score: technical.score,
-      signal: technical.signal,
+      score: final.score,
+      signal: final.signal,
       rating: final.rating,
       isWorthBuying: final.isWorthBuying,
       holdDays: final.holdDays,
@@ -79,7 +96,7 @@ export class AnalysisService {
       momentum20: technical.momentum20,
       volatility20: technical.volatility20,
       volumeRatio: technical.volumeRatio,
-      note: technical.note,
+      note,
       llmAnalysis: final.llmAnalysis,
     });
 
@@ -90,23 +107,39 @@ export class AnalysisService {
     return rowToCamel(this.analysisRepo.getInfo(type, code) ?? {});
   }
 
-  private mergeLlm(
+  /**
+   * 用 5 维维度分合成综合分并换算评级/信号/持有天数。
+   * LLM 存在时用 LLM 的维度分，否则降级用技术面维度分（technical.dims）。
+   * 无论哪条路径，score / rating / signal 都出自同一套权重与换算，口径一致。
+   */
+  mergeLlm(
     technical: ReturnType<TechnicalAnalysisService['analyze']>,
     llm: LlmResult | null,
   ) {
-    if (!llm) {
-      return {
-        rating: technical.rating,
-        isWorthBuying: technical.isWorthBuying,
-        holdDays: technical.holdDays,
-        llmAnalysis: null,
-      };
-    }
+    const dims = llm
+      ? {
+          trend: llm.trend,
+          momentum: llm.momentum,
+          valuation: llm.valuation,
+          volume: llm.volume,
+          stability: llm.stability,
+        }
+      : technical.dims;
+    const score = compositeScore5(
+      dims.trend,
+      dims.momentum,
+      dims.valuation,
+      dims.volume,
+      dims.stability,
+    );
+    const signal = signalFromScore(score, technical.trend);
     return {
-      rating: llm.rating,
-      isWorthBuying: llm.isWorthBuying ? 1 : 0,
-      holdDays: llm.holdDays,
-      llmAnalysis: llm.llmAnalysis ?? llm.reason ?? null,
+      score,
+      signal,
+      rating: ratingFromScore(score),
+      isWorthBuying: isWorthBuyingSignal(signal),
+      holdDays: holdDaysFromTrend(technical.trend, score),
+      llmAnalysis: llm?.llmAnalysis ?? llm?.reason ?? null,
     };
   }
 

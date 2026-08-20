@@ -4,35 +4,32 @@
 
 ## 1. 设计目标
 
-- 单个大模型判断个股 / ETF 是否值得买入，并给出大致持有天数预测。
-- 输出需**结构化**（JSON），回填 `rating / is_worth_buying / hold_days` 与分析文字。
+- 单个大模型对个股 / ETF 做**多维度评分**，由系统合成综合分并换算评级/信号/持有天数。
+- 输出需**结构化**（JSON），回填 `stock_analysis / etf_analysis` 与分析文字。
 - 提示词模板**全局可配置**（后续迭代可改模板，不改代码），通过配置接口管理。
+- **口径统一**：LLM 只输出各维度得分（不直接给评级），综合分与评级由系统按固定权重换算，避免 LLM 评级与系统评分打架。
 
 ## 2. 输出 JSON Schema
 
-LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档）：
+LLM 的回复必须是严格 JSON，**必填** 5 个维度得分（均 0~100，越高越有利）+ `reason`：
 
 ```json
 {
   "type": "object",
-  "required": ["rating", "isWorthBuying", "holdDays", "reason"],
+  "required": ["trend", "momentum", "valuation", "volume", "stability", "reason"],
   "properties": {
-    "rating": {
-      "type": "string",
-      "enum": ["S+", "S", "A+", "A", "B+", "B", "C+", "C", "D"]
-    },
-    "isWorthBuying": { "type": "boolean" },
-    "holdDays": { "type": "integer", "minimum": 0, "maximum": 365 },
+    "trend": { "type": "number", "minimum": 0, "maximum": 100, "description": "趋势强度" },
+    "momentum": { "type": "number", "minimum": 0, "maximum": 100, "description": "动量" },
+    "valuation": { "type": "number", "minimum": 0, "maximum": 100, "description": "估值吸引力" },
+    "volume": { "type": "number", "minimum": 0, "maximum": 100, "description": "量能" },
+    "stability": { "type": "number", "minimum": 0, "maximum": 100, "description": "风险（波动低得分高）" },
     "reason": { "type": "string", "description": "判断依据，自然语言摘要" },
-    "llmAnalysis": {
-      "type": "string",
-      "description": "详细分析文字（Markdown），保存到分析表的 llm_analysis 列"
-    },
+    "llmAnalysis": { "type": "string", "description": "详细分析文字（Markdown）" },
     "industry": { "type": "string", "description": "所属行业（股票）" },
-    "lastAmount": { "type": "number", "description": "成交额，单位元（股票）" },
+    "lastAmount": { "type": "number", "description": "成交额（股票）" },
     "pb": { "type": "number", "description": "市净率（股票）" },
     "fullName": { "type": "string", "description": "公司全称（股票）" },
-    "totalMarketCap": { "type": "number", "description": "总市值，单位元（股票）" },
+    "totalMarketCap": { "type": "number", "description": "总市值（股票）" },
     "high52w": { "type": "number", "description": "52 周最高价（股票）" },
     "low52w": { "type": "number", "description": "52 周最低价（股票）" },
     "category": { "type": "string", "description": "ETF 类别（ETF）" },
@@ -42,13 +39,30 @@ LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档�
 }
 ```
 
+### 综合评分与评级（系统换算）
+
+LLM 的 5 个维度得分由系统加权合成（权重见 `backend/src/common/scoring.ts`）：
+
+```text
+score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×stability
+```
+
+- `score` → `rating`：`ratingFromScore`（9 档）
+- `score` + 趋势 → `signal`：`signalFromScore`（BUY / HOLD / SELL）
+- `signal` → `is_worth_buying`；`score` → `hold_days`（`holdDaysFromTrend`）
+
+> LLM 不输出评级/信号/持有天数，这些全部由系统计算，保证 `score` 与 `rating` 口径一致。
+>
+> **信号方向以技术面均线为准**：`signalFromScore` 的 BUY 门槛（`score>=65 且多头`）与 `holdDaysFromTrend` 使用的趋势方向均取自技术面均线排列（`technical.trend`），而非 LLM 的趋势得分。LLM 的 `trend` 维度分只影响加权合成后的 `score`，不直接决定 BUY/HOLD/SELL 方向——信号应基于客观、可复现的技术面数据判定，LLM 打分仅作权重加成。若 LLM 趋势维度给高分但技术面为空头，`score` 可能 ≥65 但仍保持 HOLD/SELL。
+
 ### 字段回填映射
 
-| JSON 字段 | 分析表列 |
+| 来源 | 分析表列 |
 |-----------|----------|
-| `rating` | `rating`（9 档） |
-| `isWorthBuying` | `is_worth_buying`（true→1，false→0） |
-| `holdDays` | `hold_days` |
+| 5 维得分合成 `score` | `score` |
+| `score` 换算 | `rating`（9 档）/ `signal` |
+| `score` 换算 | `hold_days` |
+| `signal` 换算 | `is_worth_buying` |
 | `reason` | `note`（评分理由摘要） |
 | `llmAnalysis` | `llm_analysis` |
 
@@ -78,7 +92,7 @@ LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档�
 
 ```text
 你是一位资深 A 股分析师。请基于以下证券信息与历史 K 线数据，
-判断该标的当前是否值得买入，并给出大致持有天数预测。
+对标的进行多维度评分（只输出维度得分，不做最终评级，评级由系统换算）。
 
 ## 标的类型
 {{securityType}}（股票 / ETF）
@@ -94,12 +108,15 @@ LLM 的回复必须是严格 JSON，schema 如下（`rating` 取值限定 9 档�
 
 ## 输出要求
 请严格输出一个 JSON 对象，不要包含任何多余文字或 Markdown 代码块。
-JSON 字段必须满足以下 schema：
-- rating：9 档评级之一：S+, S, A+, A, B+, B, C+, C, D
-- isWorthBuying：布尔值，是否值得买入
-- holdDays：整数，建议持有天数（0 表示不建议买入持有，范围 0~365）
-- reason：一句话的买入判断摘要
-- llmAnalysis：详细分析文字，可用 Markdown，说明趋势、量能、风险与买卖建议
+每个维度得分是 0~100 的整数，分值越高越有利。字段必须满足以下 schema：
+- trend：趋势强度得分，价格与均线多头结构越清晰越高
+- momentum：动量得分，近 20 日涨跌动能越强越高（追高需谨慎下调）
+- valuation：估值吸引力得分，估值越低/越合理越高；ETF 无 PE/PB 时按指数相对位置中性判断
+- volume：量能得分，量价配合与资金关注度越好越高
+- stability：风险得分，波动率越低越稳定越高
+- reason：一句话的判断摘要
+- llmAnalysis：详细分析文字，可用 Markdown，说明趋势、估值、量能、风险与买卖建议
+可选回填字段（提供可帮助丰富展示）：industry / lastAmount / pb / fullName / totalMarketCap / high52w / low52w / category / manager / fundScale
 
 直接输出 JSON 即可。
 ```
@@ -176,6 +193,6 @@ CREATE TABLE IF NOT EXISTS analysis_config (
 ## 6. 失败与容错
 
 - **JSON 解析失败 / schema 不合法**：重试；仍失败则任务 `failed`，不写入脏数据。
-- **评级越界**：`rating` 不在枚举内则丢弃该次结果，视为失败。
+- **维度得分非法**：任一维度得分非 0~100 数值则丢弃该次结果，视为失败。
 - **超时**：按 `timeoutMs` 超时，触发重试。
 - **LLM 不可用**：任务 `failed`，前端提示可重试；MVP0 不做降级到纯技术面评分。

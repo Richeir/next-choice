@@ -6,6 +6,7 @@ import { useListPage } from '../hooks/useListPage';
 import FilterBar, { type FilterField } from '../components/FilterBar';
 import Pagination from '../components/Pagination';
 import StatusTag from '../components/StatusTag';
+import RatingTag from '../components/RatingTag';
 import { Empty, ErrorView, Loading } from '../components/StateViews';
 import { fmtAmountYi, fmtInt, fmtNum, fmtPct, pctClass, shortCode } from '../utils/format';
 import { PAGE_SIZE } from '../config';
@@ -132,6 +133,7 @@ export default function EtfsPage() {
                 <tr>
                   <th>代码</th>
                   <th>名称 / 管理人</th>
+                  <th>评级</th>
                   <th>类别</th>
                   <th className="num">最新 NAV</th>
                   <th className="num">日涨跌</th>
@@ -149,6 +151,9 @@ export default function EtfsPage() {
                       <td>
                         <div className="cell-name">{it.codeName}</div>
                         <div className="cell-sub">{it.manager ?? '—'}</div>
+                      </td>
+                      <td>
+                        <RatingTag rating={it.analysis?.rating ?? null} />
                       </td>
                       <td>
                         {it.category ? (

@@ -30,15 +30,32 @@ export function isWorthBuying(signal: Signal): 0 | 1 {
   return signal === 'BUY' ? 1 : 0;
 }
 
-/** 综合评分 = 0.35×趋势 + 0.30×动量 + 0.15×波动 + 0.20×量能，各分量 0~100。 */
-export function compositeScore(
-  trendScore: number,
-  momentumScore: number,
-  volatilityScore: number,
-  volumeScore: number,
+/** 5 维综合评分的权重：趋势 / 动量 / 估值 / 量能 / 风险。 */
+export const SCORE_WEIGHTS = {
+  trend: 0.25,
+  momentum: 0.2,
+  valuation: 0.2,
+  volume: 0.15,
+  stability: 0.2,
+};
+
+/**
+ * 综合评分 = 0.25×趋势 + 0.20×动量 + 0.20×估值 + 0.15×量能 + 0.20×风险，
+ * 各分量 0~100。LLM 输出维度分与技术面降级都走同一套加权。
+ */
+export function compositeScore5(
+  trend: number,
+  momentum: number,
+  valuation: number,
+  volume: number,
+  stability: number,
 ): number {
   const score =
-    0.35 * trendScore + 0.3 * momentumScore + 0.15 * volatilityScore + 0.2 * volumeScore;
+    SCORE_WEIGHTS.trend * trend +
+    SCORE_WEIGHTS.momentum * momentum +
+    SCORE_WEIGHTS.valuation * valuation +
+    SCORE_WEIGHTS.volume * volume +
+    SCORE_WEIGHTS.stability * stability;
   // 约束到 0~100
   return Math.max(0, Math.min(100, score));
 }

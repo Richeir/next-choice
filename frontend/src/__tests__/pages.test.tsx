@@ -114,6 +114,9 @@ describe('StocksPage', () => {
     );
     expect(await screen.findByText('宁德时代')).toBeInTheDocument();
     expect(screen.getAllByText('电力设备').length).toBeGreaterThan(0);
+    // 评级列：fixture rating=A
+    expect(screen.getAllByText('评级').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('A').length).toBeGreaterThan(0);
     expect(screen.getByText('+2.45%')).toBeInTheDocument();
     expect(screen.getByText('48.1 亿')).toBeInTheDocument();
     expect(screen.getAllByText('已分析').length).toBeGreaterThan(0);
@@ -141,6 +144,9 @@ describe('EtfsPage', () => {
     expect(await screen.findByText('沪深300ETF')).toBeInTheDocument();
     expect(screen.getAllByText('华泰柏瑞').length).toBeGreaterThan(0);
     expect(screen.getAllByText('宽基').length).toBeGreaterThan(0);
+    // 评级列：fixture rating=B+
+    expect(screen.getAllByText('评级').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('B+').length).toBeGreaterThan(0);
     expect(screen.getAllByText('4.182').length).toBeGreaterThan(0);
     expect(screen.getByText('1,832 亿')).toBeInTheDocument();
   });
@@ -204,7 +210,7 @@ describe('DetailPage', () => {
     expect(screen.getByText('-0.42%')).toBeInTheDocument();
     expect(screen.getByText('A+')).toBeInTheDocument();
     expect(screen.getByText('82 / 100')).toBeInTheDocument();
-    expect(screen.getByText('综合评分 · 建议：买入')).toBeInTheDocument();
+    expect(screen.getByText('建议：买入')).toBeInTheDocument();
     expect(screen.getByText('2.60 万亿')).toBeInTheDocument();
     expect(screen.getByText('1,789.00')).toBeInTheDocument();
   });
@@ -276,7 +282,7 @@ describe('DetailPage', () => {
 
     // job 完成后重新拉取分析列表，刷新出分析卡片
     await waitFor(() => expect(screen.getByText('A+')).toBeInTheDocument());
-    expect(screen.getByText(/综合评分 · 建议/)).toBeInTheDocument();
+    expect(screen.getByText(/建议：/)).toBeInTheDocument();
   });
 
   it('组件卸载后停止轮询（不产生泄漏请求）', async () => {

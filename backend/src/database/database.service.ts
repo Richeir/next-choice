@@ -27,6 +27,7 @@ export class DatabaseService implements OnApplicationShutdown {
     if (options.schemaPath) {
       this.applySchema(options.schemaPath);
     }
+    this.migrate();
     this.logger.log(`Connected to SQLite at ${options.path}`);
   }
 
@@ -38,6 +39,39 @@ export class DatabaseService implements OnApplicationShutdown {
     }
     const sql = fs.readFileSync(schemaPath, 'utf8');
     this.db.exec(sql);
+  }
+
+  /**
+   * 轻量迁移：为旧库补齐新增列（schema.sql 的 CREATE TABLE IF NOT EXISTS
+   * 不会改动已存在的表，这里逐列检查并 ALTER TABLE ADD COLUMN）。
+   */
+  private migrate(): void {
+    const adds: Array<[string, string, string]> = [
+      ['stock_analysis', 'dims', 'TEXT'],
+      ['stock_analysis', 'model', 'TEXT'],
+      ['stock_analysis', 'prompt_version', 'TEXT'],
+      ['etf_analysis', 'dims', 'TEXT'],
+      ['etf_analysis', 'model', 'TEXT'],
+      ['etf_analysis', 'prompt_version', 'TEXT'],
+      ['stock_info', 'llm_backfill_at', 'TEXT'],
+      ['etf_info', 'llm_backfill_at', 'TEXT'],
+    ];
+    for (const [table, column, ddl] of adds) {
+      try {
+        const row = this.db
+          .prepare('SELECT COUNT(*) AS n FROM pragma_table_info(?) WHERE name = ?')
+          .get(table, column) as { n: number };
+        if (row.n === 0) {
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+          this.logger.log(`Schema migrated: ${table}.${column} added`);
+        }
+      } catch (err) {
+        // 表可能尚未建立（如全新库缺表），跳过即可
+        this.logger.warn(
+          `Schema migration skipped for ${table}.${column}: ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   /** 暴露底层连接供 Repository 使用。 */

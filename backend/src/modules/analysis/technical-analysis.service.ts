@@ -76,11 +76,9 @@ export class TechnicalAnalysisService {
     const ma5 = sma(closes, 5);
     const ma20 = sma(closes, 20);
     const ma60 = sma(closes, 60);
-    const trend = trendFromMa(
-      ma5 ?? closes[closes.length - 1],
-      ma20 ?? closes[closes.length - 1],
-      ma60 ?? closes[closes.length - 1],
-    );
+    // MA60 不足（21~59 根）时由 trendFromMa 降级为 MA5/MA20 短期方向判断，
+    // 不再用最新收盘价冒充 60 日均线。
+    const trend = trendFromMa(ma5, ma20, ma60);
 
     const momentum20 = momentumOverN(closes, 20);
     const volatility20 = annualizedVolatility(closes, 20);

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { ConfigService } from '../../config/config.service';
 
 /** 评分模型的 5 个维度（均 0~100，越高越有利）。 */
@@ -38,6 +39,27 @@ export interface LlmContext {
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
+/** LLM 端点返回非 2xx 时抛出，携带 HTTP 状态码用于重试决策。 */
+class LlmHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/**
+ * 提示词模板版本：模板内容 SHA-1 前 8 位。
+ * 模板一变版本即变，用于回看某个分数的 prompt 版本（存于分析表 prompt_version）。
+ */
+export function promptVersionOf(template: string): string {
+  return createHash('sha1').update(template).digest('hex').slice(0, 8);
+}
+
+/** 指数退避：429 起步更久（500ms），其余 200ms，封顶 2s。 */
+function backoffMs(attempt: number, rateLimited: boolean): number {
+  const base = rateLimited ? 500 : 200;
+  return Math.min(2000, base * 2 ** attempt);
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -60,16 +82,26 @@ export class LlmService {
     const prompt = this.renderPrompt(config.promptTemplate, context);
 
     for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
-      if (attempt > 0) {
-        await sleep(attempt * 200); // 轻量退避，避免打爆端点
-      }
+      let rateLimited = false;
       try {
         const raw = await this.callOnce(baseUrl, model, prompt, config);
         const parsed = this.parseAndValidate(raw);
         if (parsed) return parsed;
         this.logger.warn(`LLM output invalid (attempt ${attempt + 1})`);
       } catch (err) {
+        const status = err instanceof LlmHttpError ? err.status : undefined;
+        rateLimited = status === 429;
+        // 4xx（除 429）为不可重试错误：直接放弃，避免空耗重试
+        if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+          this.logger.warn(
+            `LLM call failed (attempt ${attempt + 1}, non-retryable HTTP ${status}): ${(err as Error).message}`,
+          );
+          return null;
+        }
         this.logger.warn(`LLM call failed (attempt ${attempt + 1}): ${(err as Error).message}`);
+      }
+      if (attempt < config.maxRetries) {
+        await sleep(backoffMs(attempt, rateLimited));
       }
     }
     this.logger.warn('LLM analysis failed after all retries; falling back to technical');
@@ -102,6 +134,8 @@ export class LlmService {
         body: JSON.stringify({
           model,
           temperature: config.temperature,
+          // 让端点直接返回 JSON 对象，降低解析失败与重试概率
+          response_format: { type: 'json_object' },
           messages: [
             {
               role: 'system',
@@ -113,7 +147,7 @@ export class LlmService {
         signal: controller.signal,
       });
       if (!res.ok) {
-        throw new Error(`LLM endpoint returned ${res.status}`);
+        throw new LlmHttpError(`LLM endpoint returned ${res.status}`, res.status);
       }
       const data = (await res.json()) as {
         choices?: { message?: { content?: string } }[];

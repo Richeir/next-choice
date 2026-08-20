@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS stock_info (
     total_market_cap REAL,
     high_52w        REAL,
     low_52w         REAL,
-    last_fetch_date TEXT              -- 全量抓取完成日（脚本标记，断点续传用）
+    last_fetch_date TEXT,             -- 全量抓取完成日（脚本标记，断点续传用）
+    llm_backfill_at TEXT              -- LLM 最近一次回填基础信息时间（ISO 8601）
 );
 
 CREATE TABLE IF NOT EXISTS etf_info (
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_close      REAL,
     last_pct_chg    REAL,
     fund_scale      REAL,               -- 由 LLM 填充
-    last_fetch_date TEXT                -- 全量抓取完成日（脚本标记，断点续传用）
+    last_fetch_date TEXT,               -- 全量抓取完成日（脚本标记，断点续传用）
+    llm_backfill_at TEXT                -- LLM 最近一次回填基础信息时间（ISO 8601）
 );
 
 -- ============ K 线数据 ============
@@ -179,6 +181,9 @@ CREATE TABLE IF NOT EXISTS stock_analysis (
     volume_ratio    REAL,
     note            TEXT,
     llm_analysis    TEXT,
+    dims            TEXT,               -- 5 维得分 JSON（trend/momentum/valuation/volume/stability）
+    model           TEXT,               -- 本次分析所用 LLM 模型（技术面降级时为 NULL）
+    prompt_version  TEXT,               -- 提示词模板版本（模板内容 SHA-1 前 8 位）
     PRIMARY KEY (code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_analysis_date ON stock_analysis(date);
@@ -200,6 +205,9 @@ CREATE TABLE IF NOT EXISTS etf_analysis (
     volume_ratio    REAL,
     note            TEXT,
     llm_analysis    TEXT,
+    dims            TEXT,               -- 5 维得分 JSON（trend/momentum/valuation/volume/stability）
+    model           TEXT,               -- 本次分析所用 LLM 模型（技术面降级时为 NULL）
+    prompt_version  TEXT,               -- 提示词模板版本（模板内容 SHA-1 前 8 位）
     PRIMARY KEY (code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_analysis_date ON etf_analysis(date);
@@ -221,3 +229,16 @@ CREATE TABLE IF NOT EXISTS analysis_config (
     value      TEXT,      -- JSON 字符串
     updated_at TEXT
 );
+
+-- 分析任务（JobManagerService 落库，进程重启后仍可查询/恢复）。
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,           -- 'stock' | 'etf'
+    code       TEXT NOT NULL,           -- 标的代码，如 sh.600000
+    status     TEXT NOT NULL,           -- pending | running | done | failed
+    result     TEXT,                    -- 任务结果（JSON 序列化，done 时）
+    error      TEXT,                    -- 失败原因
+    created_at TEXT NOT NULL,           -- 创建时间（ISO 8601）
+    updated_at TEXT NOT NULL            -- 最近更新时间（ISO 8601）
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_jobs_code ON analysis_jobs(kind, code, status);

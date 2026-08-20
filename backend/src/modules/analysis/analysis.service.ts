@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AnalysisRepository } from './analysis.repository';
 import { TechnicalAnalysisService, buildNote } from './technical-analysis.service';
-import { LlmService, LlmContext, LlmResult } from './llm.service';
+import { LlmService, LlmContext, LlmResult, promptVersionOf } from './llm.service';
 import { KlineRepository, SecurityType, KlineQuery } from '../kline/kline.repository';
 import { JobManagerService } from '../../jobs/job-manager.service';
 import { ConfigService } from '../../config/config.service';
@@ -25,20 +25,26 @@ export class AnalysisService {
     private readonly config: ConfigService,
   ) {}
 
-  /** 触发单只标的分析：异步执行，写入分析表并回填基础信息。 */
+  /**
+   * 触发单只标的分析：异步执行，写入分析表并回填基础信息。
+   * 同一标的有进行中（pending/running）任务时复用该任务，避免重复消耗 LLM。
+   */
   trigger(type: SecurityType, code: string) {
     if (!this.analysisRepo.exists(type, code)) {
       throw new NotFoundException(`${type} ${code} not found`);
     }
-    const job = this.jobs.create();
-    void this.jobs.run(job.id, () => this.execute(type, code));
+    const job = this.jobs.create(type, code);
+    if (job.status === 'pending') {
+      void this.jobs.run(job.id, () => this.execute(type, code));
+    }
     return { accepted: true, jobId: job.id };
   }
 
+  /** 查询任务；未知 id 返回 404（而非 fake failed 状态）。 */
   getJob(id: string) {
     const job = this.jobs.get(id);
     if (!job) {
-      return { jobId: id, status: 'failed', result: null, error: 'job not found' };
+      throw new NotFoundException(`job ${id} not found`);
     }
     return { jobId: job.id, status: job.status, result: job.result, error: job.error };
   }
@@ -69,9 +75,13 @@ export class AnalysisService {
 
     const llmResult = await this.llm.analyze(this.buildLlmContext(type, info, klineRows, technical));
 
-    const today = new Date().toISOString().slice(0, 10);
+    // 分析日期取数据最后交易日（升序列表最后一行），避免 UTC 时区跨日记到前一天。
+    const lastRow = klineRows[klineRows.length - 1];
+    const date = String(lastRow.date);
+
     const final = this.mergeLlm(technical, llmResult);
-    // note 的“综合评分”须与入库 score 同源：LLM 路径基于 final.score 重建，避免两套数字并存。
+    // note 的“综合评分”须与入库 score 同源：LLM 路径基于 final.score 重建，避免两套数字并存；
+    // LLM 的 reason 追加到 note 末尾（文档约定 reason → note），不再丢弃。
     const note = llmResult
       ? buildNote(
           technical.trend,
@@ -79,11 +89,11 @@ export class AnalysisService {
           technical.momentum20,
           technical.volatility20,
           technical.volumeRatio,
-        )
+        ) + (llmResult.reason ? `；${llmResult.reason}` : '')
       : technical.note;
 
     this.analysisRepo.insertAnalysis(type, code, {
-      date: today,
+      date,
       score: final.score,
       signal: final.signal,
       rating: final.rating,
@@ -98,6 +108,9 @@ export class AnalysisService {
       volumeRatio: technical.volumeRatio,
       note,
       llmAnalysis: final.llmAnalysis,
+      dims: JSON.stringify(final.dims),
+      model: llmResult ? process.env.LLM_MODEL || config.model : null,
+      promptVersion: llmResult ? promptVersionOf(config.promptTemplate) : null,
     });
 
     if (llmResult) {
@@ -139,6 +152,7 @@ export class AnalysisService {
       rating: ratingFromScore(score),
       isWorthBuying: isWorthBuyingSignal(signal),
       holdDays: holdDaysFromTrend(technical.trend, score),
+      dims,
       llmAnalysis: llm?.llmAnalysis ?? llm?.reason ?? null,
     };
   }

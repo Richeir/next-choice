@@ -264,7 +264,7 @@
 
 ### 5.4 `GET /api/jobs/:jobId`
 
-查询分析任务状态（供轮询）。
+查询分析任务状态（供轮询）。任务记录持久化到 `analysis_jobs` 表，进程重启后仍可查询（重启时中断的 `pending` / `running` 任务标记为 `failed`）。
 
 **响应**
 
@@ -273,6 +273,12 @@
 ```
 
 `status` 取值：`pending` / `running` / `done` / `failed`。
+
+**错误**
+
+- `404`：任务 id 不存在（不再伪造 `status: "failed"`），前端提示"任务不存在或已失效"。
+
+> 调度说明：同一标的进行中（`pending` / `running`）任务去重，重复触发复用原 job；全局并发上限 3（信号量 FIFO 排队）。
 
 ## 6. K 线数据
 

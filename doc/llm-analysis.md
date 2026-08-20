@@ -63,8 +63,13 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 | `score` 换算 | `rating`（9 档）/ `signal` |
 | `score` 换算 | `hold_days` |
 | `signal` 换算 | `is_worth_buying` |
-| `reason` | `note`（评分理由摘要） |
-| `llmAnalysis` | `llm_analysis` |
+| 实际使用的 5 维得分 | `dims`（JSON） |
+| 本次生效的 LLM 模型 | `model`（降级时为 NULL） |
+| 提示词模板版本（SHA-1 前 8 位） | `prompt_version`（降级时为 NULL） |
+| `reason` | `note`（追加到技术指标摘要末尾） |
+| `llmAnalysis` | `llm_analysis`（缺失时用 `reason` 兜底） |
+
+> 分析表 `date` 取**数据最后交易日**（最后一行日 K 的日期），不使用服务器当前日期，避免 UTC 时区跨日问题；"分析日期"≠"触发日期"。
 
 ### 额外回填（info 表，供列表/详情展示）
 
@@ -82,7 +87,11 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 | `manager` | `etf_info.manager`（管理人） | ETF |
 | `fundScale` | `etf_info.fund_scale`（规模） | ETF |
 
-这些字段为**可空**，未分析（未填充）前为 `NULL`。
+这些字段为**可空**，未分析（未填充）前为 `NULL`。回填遵循以下规则：
+
+- **仅回填空字段**：目标列已有值（非 NULL / 非空串）时**不覆盖**，防止 LLM 幻觉值覆盖已有可靠数据。
+- **入库前校验**：字符串须非空且限长（industry/category ≤100，fullName/manager ≤200）；数值须有限，`high52w` / `low52w` 须为正，其余非负；校验不过的字段直接丢弃。
+- **来源可追溯**：每次发生回填时写入 `llm_backfill_at` 时间戳，便于识别数据来源与清理。
 
 ## 3. 提示词模板
 
@@ -140,7 +149,17 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 
 - **默认值**：存放于后端 `config/analysis.config.json`（含 `model`、`promptTemplate`、`timeoutMs` 等）。
 - **运行时覆盖**：通过 `PUT /api/config/analysis` 修改，写入数据库 `analysis_config` 表，优先于默认文件。
-- 启动时合并：DB 有值则用 DB，否则用默认文件。
+- 启动时合并：DB 有值则用 DB，否则用默认文件；合并结果带进程内缓存（`update` 时失效），避免每次分析查库。
+
+### 环境变量覆盖（优先级最高）
+
+| 变量 | 说明 |
+|------|------|
+| `LLM_API_KEY` | API key；未设置时**跳过 LLM**，直接降级到纯技术面评分 |
+| `LLM_BASE_URL` | 端点地址，默认 `https://api.openai.com/v1` |
+| `LLM_MODEL` | 模型名，**优先于** `analysis_config.model` / 默认文件的 `model` |
+
+> 分析表落库的 `model` 列记录本次实际生效的模型（含 env 覆盖后的结果）；`prompt_version` 为提示词模板内容的 SHA-1 前 8 位，模板一变版本即变。
 
 **`analysis_config` 表结构**（若采用 DB 覆盖）
 
@@ -181,18 +200,30 @@ CREATE TABLE IF NOT EXISTS analysis_config (
 ## 5. 调用流程
 
 ```
-1. 读取配置（DB 优先，否则默认文件）
+1. 读取配置（DB 优先，否则默认文件，进程内缓存）
 2. 从 SQLite 组装 basicInfo / klineSummary / technicalIndicators
 3. 用 {{...}} 占位符渲染 promptTemplate
-4. 调用 LLM，校验 JSON 输出（含 rating 枚举校验）
-5. 解析失败则重试（最多 maxRetries 次）
-6. 回填 stock_analysis / etf_analysis（字段映射见 §2）
-7. 失败时记录错误，任务状态置 failed
+4. 调用 LLM（response_format=json_object），校验 JSON 输出（5 维得分 0~100，非法整次丢弃）
+5. 解析失败/端点错误则重试（最多 maxRetries 次，指数退避；4xx 非 429 不重试）
+6. 系统按固定权重合成综合分并换算评级/信号/持有天数（口径统一）；reason 追加进 note
+7. 回填 stock_analysis / etf_analysis（字段映射见 §2，分析日期=数据最后交易日，含 dims/model/prompt_version）
+8. 回填基础信息表（仅空字段 + 校验 + llm_backfill_at，见 §2）
+9. LLM 不可用/重试耗尽时降级到纯技术面评分（估值给中性 50），任务仍为 done
 ```
 
 ## 6. 失败与容错
 
-- **JSON 解析失败 / schema 不合法**：重试；仍失败则任务 `failed`，不写入脏数据。
-- **维度得分非法**：任一维度得分非 0~100 数值则丢弃该次结果，视为失败。
+- **JSON 解析失败 / schema 不合法**：重试；仍失败则降级到纯技术面评分，不写入脏数据。
+- **维度得分非法**：任一维度得分非 0~100 数值则丢弃该次结果，触发重试。
 - **超时**：按 `timeoutMs` 超时，触发重试。
-- **LLM 不可用**：任务 `failed`，前端提示可重试；MVP0 不做降级到纯技术面评分。
+- **HTTP 4xx（除 429）**：不可重试，直接放弃并降级（避免空耗重试）。
+- **429 / 5xx / 网络错误**：重试（最多 `maxRetries` 次），指数退避（429 起步 500ms，其余 200ms，封顶 2s）。
+- **LLM 不可用（无 API key）或重试耗尽**：降级到纯技术面评分，任务正常完成（`model` / `prompt_version` 为 NULL），前端无需特判重试。
+- **错误记录**：任务失败原因写入 `analysis_jobs.error` 持久化，可查询；不再只有日志。
+
+### 6.1 任务调度与并发
+
+- **任务落库**：每次分析在 `analysis_jobs` 表落一条记录（`kind` / `code` / `status` / `result` / `error` / 时间戳），进程重启后前端仍可查询；重启时中断的 `pending` / `running` 任务被标记为 `failed`（`interrupted by server restart`）。
+- **per-code 去重**：同一标的有进行中任务时，重复触发直接复用原 job，避免重复消耗 LLM 与同一天 UPSERT 互相覆盖。
+- **并发上限**：全局信号量限制同时执行的分析任务数（默认 3），超出进入 FIFO 队列。
+- **GET /api/jobs/:jobId**：未知 id 返回 404（而不是伪造 `failed`），前端提示"任务不存在或已失效"。

@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS stock_info (
     total_market_cap REAL,             -- 总市值，由 LLM 填充
     high_52w        REAL,              -- 52 周最高价，由 LLM 填充
     low_52w         REAL,              -- 52 周最低价，由 LLM 填充
-    last_fetch_date TEXT               -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
+    last_fetch_date TEXT,              -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
+    llm_backfill_at TEXT               -- LLM 最近一次回填基础信息时间（ISO 8601）
 );
 ```
 
@@ -95,6 +96,8 @@ CREATE TABLE IF NOT EXISTS stock_info (
 > **行情字段来源（区分脚本回填 vs LLM 填充）**：
 > - **脚本可回填（来自 `query_history_k_data_plus` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`）、`pe_ttm`（`peTTM`），取每个 `code` 日期最大的那一行。
 > - **由 LLM 分析时填充（BaoStock 无法直接获取）**：`industry`（所属行业）、`last_amount`（成交额）、`pb`、`full_name`（公司全称）、`total_market_cap`（总市值）、`high_52w`（52 周最高）、`low_52w`（52 周最低）。这些字段为**可空**，未填充前为 `NULL`。
+>
+> **LLM 回填规则（防幻觉覆盖）**：仅回填空字段（目标列已有值不覆盖）；入库前校验（字符串非空且限长、数值有限且非负、52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯。
 
 ### 4.2 ETF 基础信息 `etf_info`
 
@@ -115,7 +118,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_close      REAL,               -- 最后一个交易日收盘价（不复权原始价，即 NAV），脚本回填
     last_pct_chg    REAL,               -- 最后一个交易日涨跌幅（%），脚本回填
     fund_scale      REAL,               -- 基金规模（如净值规模/份额规模，口径以填补时约定为准），由 LLM 循环填补
-    last_fetch_date TEXT                -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
+    last_fetch_date TEXT,               -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
+    llm_backfill_at TEXT                -- LLM 最近一次回填基础信息时间（ISO 8601）
 );
 ```
 
@@ -124,7 +128,7 @@ CREATE TABLE IF NOT EXISTS etf_info (
 > **行情字段来源（区分脚本回填 vs LLM 填充）**：
 > - **脚本可回填（来自 `etf_kline_daily` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`），取每个 `code` 日期最大的那一行。`last_close` 同时作为 ETF 的 **NAV**（净值）。与股票一致，无需 LLM。
 > - **由 LLM 分析时填充（BaoStock 无法直接获取）**：`category`（类别：宽基/行业/主题/策略/跨境/债券）、`manager`（管理人）、`fund_scale`（基金规模，入库时建议统一口径如元 / 亿元 / 份额数）。
-> - 这些字段为**可空**，未填充前为 `NULL`。
+> - 这些字段为**可空**，未填充前为 `NULL`；回填规则与股票一致（仅空字段 + 校验 + `llm_backfill_at`）。
 
 ## 5. K 线表结构（6 张）
 
@@ -287,14 +291,14 @@ CREATE INDEX IF NOT EXISTS idx_etf_monthly_codedate ON etf_kline_monthly(code, d
 
 ## 6. 分析结果表（2 张）
 
-基于已有 K 线数据，对股票 / ETF 做纯技术面分析，将**评分、信号与 LLM 分析输出**按时序历史保存，便于回看结论变化与回测验证。默认每周计算一次（权重与频率均可调）。
+基于已有 K 线数据，对股票 / ETF 做分析（技术面 + LLM 评分），将**评分、信号与 LLM 分析输出**按 `code + 最后交易日` 保存，便于回看结论变化与回测验证。分析由前端详情页「分析」按钮按需触发，结果幂等 UPSERT（同一天重复分析覆盖更新）。
 
 ### 6.1 股票技术面分析 `stock_analysis`
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
 | `code` | `TEXT` | 证券代码，如 `sh.600000` |
-| `date` | `TEXT` | 分析日期 `YYYY-MM-DD` |
+| `date` | `TEXT` | 最后交易日 `YYYY-MM-DD`（取数据最后一行日 K，不用服务器日期，避免 UTC 跨日） |
 | `score` | `REAL` | 综合评分 0~100 |
 | `signal` | `TEXT` | 结论：`BUY` / `HOLD` / `SELL` |
 | `rating` | `TEXT` | 买入评级（9 档，具时效性，随 `date` 存于分析表）：`S+`/`S`/`A+`/`A`/`B+`/`B`/`C+`/`C`/`D` |
@@ -307,8 +311,11 @@ CREATE INDEX IF NOT EXISTS idx_etf_monthly_codedate ON etf_kline_monthly(code, d
 | `momentum_20` | `REAL` | 近 20 日涨跌幅（%） |
 | `volatility_20` | `REAL` | 近 20 日年化波动率（%） |
 | `volume_ratio` | `REAL` | 量比（近 5 日均量 / 近 20 日均量） |
-| `note` | `TEXT` | 评分理由摘要 |
-| `llm_analysis` | `TEXT` | LLM 分析输出的大段文字（自然语言 / Markdown），随历史保存 |
+| `note` | `TEXT` | 评分理由摘要（技术指标摘要；LLM 的 `reason` 追加其后） |
+| `llm_analysis` | `TEXT` | LLM 分析输出的大段文字（自然语言 / Markdown），随历史保存；LLM 未给 `llmAnalysis` 时用 `reason` 兜底 |
+| `dims` | `TEXT` | 实际使用的 5 维得分 JSON（trend/momentum/valuation/volume/stability），用于复现分数 |
+| `model` | `TEXT` | 本次分析生效的 LLM 模型（含 env `LLM_MODEL` 覆盖）；技术面降级时为 NULL |
+| `prompt_version` | `TEXT` | 提示词模板版本（模板 SHA-1 前 8 位）；技术面降级时为 NULL |
 
 ```sql
 CREATE TABLE IF NOT EXISTS stock_analysis (
@@ -328,6 +335,9 @@ CREATE TABLE IF NOT EXISTS stock_analysis (
     volume_ratio    REAL,
     note            TEXT,
     llm_analysis    TEXT,
+    dims            TEXT,
+    model           TEXT,
+    prompt_version  TEXT,
     PRIMARY KEY (code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_analysis_date ON stock_analysis(date);
@@ -355,6 +365,9 @@ CREATE TABLE IF NOT EXISTS etf_analysis (
     volume_ratio    REAL,
     note            TEXT,
     llm_analysis    TEXT,
+    dims            TEXT,
+    model           TEXT,
+    prompt_version  TEXT,
     PRIMARY KEY (code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_analysis_date ON etf_analysis(date);
@@ -378,7 +391,7 @@ score = 0.35×趋势得分 + 0.30×动量得分 + 0.15×波动得分 + 0.20×量
 - `score < 45` → `SELL`
 - `hold_days`：按趋势强度给出，多头强推持有天数多（如 10~30 天），否则 0
 
-**买入评级（9 档）映射**（纯技术面模式下由 `score` 0~100 换算，阈值可调；LLM 模式下由 LLM 直接产出 `rating`）：
+**买入评级（9 档）映射**（无论 LLM 模式还是技术面降级，`rating` 一律由系统按 `score` 0~100 换算；LLM **不直接产出** `rating`/`signal`/`hold_days`，保证 `score` 与 `rating` 口径一致）：
 
 | 区间 | 评级 |
 |------|------|
@@ -394,7 +407,7 @@ score = 0.35×趋势得分 + 0.30×动量得分 + 0.15×波动得分 + 0.20×量
 
 > `rating` 具**时效性**，随 `date` 存于分析表（主键的一部分），**不冗余到 `stock_info` / `etf_info`**。列表页按评级排序时取每只股票最新一条（`code` 分组取最大 `date` 的 `rating`）。
 
-> **LLM 模式**：MVP0 由单个大模型判断是否值得买入并给出持有天数。此时 LLM 的输出应**回填结构字段** `rating`、`is_worth_buying`、`hold_days`（而不是只写入 `llm_analysis` 文字），`llm_analysis` 保存 LLM 的推理文字。纯技术面模式仅作为无 LLM 时的兜底。
+> **LLM 模式**：LLM 只输出 5 维得分（可选 `reason` / `llmAnalysis` 与 info 回填字段），`rating` / `signal` / `is_worth_buying` / `hold_days` 全部由系统按 `compositeScore5` 固定权重换算（见 `backend/src/common/scoring.ts`）。`llm_analysis` 保存 LLM 的推理文字，`reason` 追加进 `note`。**LLM 不可用**（无 API key / 重试耗尽）时降级到纯技术面评分（估值维度给中性 50），任务仍正常完成（`model` / `prompt_version` 为 NULL）。
 
 ## 7. 辅助表
 
@@ -413,6 +426,26 @@ CREATE TABLE IF NOT EXISTS adjust_factor (
 ```
 
 > 因子实际含义请以 BaoStock 返回为准（不同 `query_adjust_factor` 调用口径可能返回前复权/后复权因子之一）。重算前复权价的基本思路：`前复权价 ≈ 原始价 × 前复权因子`，具体公式按 BaoStock 文档核对。
+
+### 7.2 分析任务 `analysis_jobs`
+
+分析任务的持久化记录（JobManagerService 双写内存 + 本表，进程重启后仍可查询；重启时中断的 `pending` / `running` 任务标记为 `failed`）：
+
+```sql
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,           -- 'stock' | 'etf'
+    code       TEXT NOT NULL,           -- 标的代码，如 sh.600000
+    status     TEXT NOT NULL,           -- pending | running | done | failed
+    result     TEXT,                    -- 任务结果（JSON 序列化，done 时）
+    error      TEXT,                    -- 失败原因
+    created_at TEXT NOT NULL,           -- 创建时间（ISO 8601）
+    updated_at TEXT NOT NULL            -- 最近更新时间（ISO 8601）
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_jobs_code ON analysis_jobs(kind, code, status);
+```
+
+> 调度规则：同一标的同一时刻只允许一个 `pending` / `running` 任务（per-code 去重）；全局并发上限 3（信号量，FIFO 排队）。
 
 ## 8. 常用查询示例
 

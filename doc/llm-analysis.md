@@ -52,6 +52,8 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 - `signal` → `is_worth_buying`；`score` → `hold_days`（`holdDaysFromTrend`）
 
 > LLM 不输出评级/信号/持有天数，这些全部由系统计算，保证 `score` 与 `rating` 口径一致。
+>
+> **信号方向以技术面均线为准**：`signalFromScore` 的 BUY 门槛（`score>=65 且多头`）与 `holdDaysFromTrend` 使用的趋势方向均取自技术面均线排列（`technical.trend`），而非 LLM 的趋势得分。LLM 的 `trend` 维度分只影响加权合成后的 `score`，不直接决定 BUY/HOLD/SELL 方向——信号应基于客观、可复现的技术面数据判定，LLM 打分仅作权重加成。若 LLM 趋势维度给高分但技术面为空头，`score` 可能 ≥65 但仍保持 HOLD/SELL。
 
 ### 字段回填映射
 

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AnalysisRepository } from './analysis.repository';
-import { TechnicalAnalysisService } from './technical-analysis.service';
+import { TechnicalAnalysisService, buildNote } from './technical-analysis.service';
 import { LlmService, LlmContext, LlmResult } from './llm.service';
 import { KlineRepository, SecurityType, KlineQuery } from '../kline/kline.repository';
 import { JobManagerService } from '../../jobs/job-manager.service';
@@ -71,6 +71,16 @@ export class AnalysisService {
 
     const today = new Date().toISOString().slice(0, 10);
     const final = this.mergeLlm(technical, llmResult);
+    // note 的“综合评分”须与入库 score 同源：LLM 路径基于 final.score 重建，避免两套数字并存。
+    const note = llmResult
+      ? buildNote(
+          technical.trend,
+          final.score,
+          technical.momentum20,
+          technical.volatility20,
+          technical.volumeRatio,
+        )
+      : technical.note;
 
     this.analysisRepo.insertAnalysis(type, code, {
       date: today,
@@ -86,7 +96,7 @@ export class AnalysisService {
       momentum20: technical.momentum20,
       volatility20: technical.volatility20,
       volumeRatio: technical.volumeRatio,
-      note: technical.note,
+      note,
       llmAnalysis: final.llmAnalysis,
     });
 
@@ -102,7 +112,7 @@ export class AnalysisService {
    * LLM 存在时用 LLM 的维度分，否则降级用技术面维度分（technical.dims）。
    * 无论哪条路径，score / rating / signal 都出自同一套权重与换算，口径一致。
    */
-  private mergeLlm(
+  mergeLlm(
     technical: ReturnType<TechnicalAnalysisService['analyze']>,
     llm: LlmResult | null,
   ) {

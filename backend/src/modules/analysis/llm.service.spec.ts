@@ -128,7 +128,7 @@ describe('LlmService', () => {
     restore();
   });
 
-  it('容忍维度得分为字符串数字并拒绝，重试后返回 null（不落库脏数据）', async () => {
+  it('拒绝字符串维度分并重试，重试后返回 null（不落库脏数据）', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(jsonResponse(JSON.stringify({

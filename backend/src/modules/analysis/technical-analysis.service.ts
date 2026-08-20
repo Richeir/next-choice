@@ -174,7 +174,7 @@ function calcVolumeRatio(
   return shortAvg / longAvg;
 }
 
-function buildNote(
+export function buildNote(
   trend: Trend,
   score: number,
   momentum20: number | null,

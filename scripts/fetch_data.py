@@ -264,8 +264,107 @@ def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False,
                              incremental)
 
 
+def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
+    """雪球逐只补齐个股字段，仅处理 full_name 为空的在市股票；
+    basic 与 quote 任一成功即写库（部分成功也入库），两者皆失败记 fail。"""
+    import time as _time
+    rows = conn.execute(
+        "SELECT code FROM stock_info"
+        " WHERE status='1' AND (full_name IS NULL OR full_name='')"
+        " ORDER BY code").fetchall()
+    codes = [r["code"] for r in rows]
+    if limit is not None:
+        codes = codes[:limit]
+    n_ok = n_fail = 0
+    total = len(codes)
+    for idx, code in enumerate(codes, 1):
+        basic = src.stock_basic(code, max_retries=max_retries)
+        quote = src.stock_quote(code, max_retries=max_retries)
+        if basic is None and quote is None:
+            log.warning("stock_info %s: both xq calls failed", code)
+            n_fail += 1
+            continue
+        basic = basic or {}
+        quote = quote or {}
+        mapping = {"full_name": basic.get("full_name"),
+                   "industry": basic.get("industry"),
+                   "ipoDate": basic.get("ipo_date"),
+                   "pb": quote.get("pb"), "high_52w": quote.get("high_52w"),
+                   "low_52w": quote.get("low_52w"),
+                   "total_market_cap": quote.get("total_market_cap")}
+        sets, vals = [], []
+        for col, v in mapping.items():
+            if v is not None:
+                sets.append(f"{col}=?")
+                vals.append(v)
+        if sets:
+            vals.append(code)
+            conn.execute(f"UPDATE stock_info SET {', '.join(sets)}"
+                         " WHERE code=?", vals)
+            conn.commit()
+        n_ok += 1
+        if idx % 50 == 0 or idx == total:
+            print(f"[stock-info] {idx}/{total} ok={n_ok} fail={n_fail}",
+                  flush=True)
+        if idx < total and sleep_s > 0:
+            _time.sleep(sleep_s)
+    return n_ok, n_fail
+
+
+def _ensure_info_row(conn, code, max_retries):
+    """--codes 路径：若 info 表无该 code，按号段判断股票/ETF 写入最小行。"""
+    exists = conn.execute("SELECT 1 FROM stock_info WHERE code=?",
+                          (code,)).fetchone()
+    if exists:
+        return "stock"
+    exists = conn.execute("SELECT 1 FROM etf_info WHERE code=?",
+                          (code,)).fetchone()
+    if exists:
+        return "etf"
+    prefix = code[:2]
+    if prefix in ("51", "56", "58", "15", "16"):
+        conn.execute("INSERT INTO etf_info (code, market, type, status)"
+                     " VALUES (?,?,?,?)",
+                     (code, market_of(code), "5", "1"))
+        return "etf"
+    basic = src.stock_basic(code, max_retries=max_retries) or {}
+    conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                 " status, full_name, industry, ipoDate)"
+                 " VALUES (?,?,?,?,?,?,?,?)",
+                 (code, basic.get("full_name"), market_of(code), "1", "1",
+                  basic.get("full_name"), basic.get("industry"),
+                  basic.get("ipo_date")))
+    return "stock"
+
+
+def run_fetch(conn, codes, freqs, adjusts, start, end, max_retries=3):
+    """--codes 路径：补齐 info 行 + 逐只抓 K 线。"""
+    for code in codes:
+        kind = _ensure_info_row(conn, code, max_retries)
+        conn.commit()
+        code_adjusts = ["3"] if kind == "etf" else adjusts
+        for freq in freqs:
+            for adj in code_adjusts:
+                _fetch_one_kline(conn, kind, code, freq, adj, start, end,
+                                 max_retries)
+        print(f"[codes] {code} done ({kind})", flush=True)
+
+
+class _DataParser(argparse.ArgumentParser):
+    """带组合校验的解析器：--incremental 仅适用于 K 线全量抓取命令。"""
+
+    def parse_args(self, args=None, namespace=None):
+        ns = super().parse_args(args, namespace)
+        if ns.incremental and not (ns.fetch_stock_kline or ns.fetch_etf_kline):
+            self.error(
+                "--incremental 只能与 --fetch-stock-kline /"
+                " --fetch-etf-kline 一起使用"
+            )
+        return ns
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(description="Akshare 数据采集")
+    parser = _DataParser(description="Akshare 数据采集")
     parser.add_argument("--db", default=os.path.join(ROOT, "data", "market.db"))
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--update-stock-list", action="store_true",
@@ -320,8 +419,40 @@ def main(argv=None):
         elif args.update_etf_list:
             n_ok, n_fail = update_etf_list(conn, args.max_retries)
             print(f"done. db={args.db} etf_list ok={n_ok} fail={n_fail}")
-        else:
-            raise SystemExit("该命令将在后续任务实现")
+        elif args.fetch_stock_info:
+            n_ok, n_fail = fetch_stock_info(conn, limit=args.limit,
+                                            sleep_s=args.sleep,
+                                            max_retries=args.max_retries)
+            print(f"done. db={args.db} stock_info ok={n_ok} fail={n_fail}")
+        elif args.fetch_stock_kline or args.fetch_etf_kline:
+            freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
+            adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]
+                       if args.adjust else ["2", "3"])
+            start, end = resolve_date_range(args.start, args.end)
+            if args.fetch_stock_kline:
+                n_ok, n_fail = fetch_stock_kline(
+                    conn, freqs, adjusts, start, end, force=args.force,
+                    incremental=args.incremental, sleep_s=args.sleep,
+                    max_retries=args.max_retries)
+                kind = "stock"
+            else:
+                n_ok, n_fail = fetch_etf_kline(
+                    conn, freqs, adjusts, start, end, force=args.force,
+                    incremental=args.incremental, sleep_s=args.sleep,
+                    max_retries=args.max_retries)
+                kind = "etf"
+            print(f"done. db={args.db} {kind}_kline ok={n_ok} fail={n_fail} "
+                  f"freqs={freqs} start={start} end={end} "
+                  f"force={args.force} incremental={args.incremental}")
+        else:  # --codes
+            freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
+            adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]
+                       if args.adjust else ["3"])
+            codes = [c.strip() for c in args.codes.split(",") if c.strip()]
+            start, end = resolve_date_range(args.start, args.end)
+            run_fetch(conn, codes, freqs, adjusts, start, end,
+                      max_retries=args.max_retries)
+            print(f"done. db={args.db} codes={codes} freqs={freqs}")
     finally:
         conn.close()
 

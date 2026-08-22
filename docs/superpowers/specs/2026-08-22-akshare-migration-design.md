@@ -45,9 +45,11 @@ BaoStock 数据内容少（行业、估值、全称、ETF 管理人/规模等缺
 - `industry` / `category` / `manager` / `fund_scale` 等列保留，注释改为
   "由 Akshare 填充"
 - `last_fetch_date` 保留（断点续传）
-- K 线 6 张表结构不变；`adjust` 语义保持 `1` 不复权 / `2` 前复权 /
-  `3` 后复权
-- 新浪不支持 ETF 复权：`etf_kline_*` 只写入 `adjust='1'`
+- K 线 6 张表结构不变；`adjustflag` 语义保持项目现有约定：`'2'` 前复权 /
+  `'3'` 不复权（schema CHECK 不变）；新浪源映射：`qfq` → `'2'`，
+  不复权（`""`）→ `'3'`
+- 新浪不支持 ETF 复权：`etf_kline_*` 只写入 `adjustflag='3'`
+- ETF 日 K 无 peTTM/pbMRQ/psTTM/pcfNcfTTM 来源：这些列写 NULL（列保留）
 - 金额单位统一为**元**（腾讯源"亿" × 1e8 换算）
 
 ## 4. 架构：新增数据源层（方案 B）
@@ -117,7 +119,10 @@ CLI 命令结构保持：
 ## 6. 清理
 
 - 删除 `scripts/llm_backfill.py` 及其测试
-- 删除 `scripts/transform.py`（行情回填职责由列表刷新取代）
+- `scripts/transform.py` 保留：`market_of` 改为号段推断；`to_float` 增加
+  NaN 处理；`kline_table` 不变（`db.py` 依赖）
+- `scripts/db.py`：删除 `backfill_stock_info`/`backfill_etf_info`
+  （行情字段改由列表刷新时从腾讯 spot 直接写入）
 - `requirements.txt`：移除 `baostock`，加入 `akshare`
 
 ## 7. 文档更新（`doc/`）

@@ -96,6 +96,174 @@ def update_etf_list(conn, max_retries=3):
     return n_ok, n_fail
 
 
+VALID_ADJUST = ("2", "3")
+_ADJUST_SINA = {"3": "", "2": "qfq"}
+# 增量重采样的周期边界余量（周 10 天 / 月 40 天，日 K 重拉 1 天覆盖修正）
+_INC_PAD_DAYS = {"daily": 1, "weekly": 10, "monthly": 40}
+
+
+def _due_freqs(freqs, today, last_dates):
+    """增量模式频率门控：
+    daily 仅工作日；weekly 周末且最后周 K 距今 >2 天，或距今 >7 天（补漏）；
+    monthly 月初前 3 天（day<=3），或距今 >31 天（补漏）。
+    last_dates: {freq: 'YYYY-MM-DD' 或 None}，None 不门控直接拉。
+    """
+    due = []
+    for f in freqs:
+        last = last_dates.get(f)
+        if last is None:
+            due.append(f)
+        elif f == "daily":
+            if today.weekday() < 5:
+                due.append(f)
+        elif f == "weekly":
+            gap = (today - date.fromisoformat(last)).days
+            if (today.weekday() >= 5 and gap > 2) or gap > 7:
+                due.append(f)
+        elif f == "monthly":
+            if today.day <= 3 or (today - date.fromisoformat(last)).days > 31:
+                due.append(f)
+    return due
+
+
+def _kline_rows(kind, freq, df, code, adjustflag):
+    """KLINE_COLS DataFrame -> db.insert_kline 的行列表（列顺序对齐
+    db._TABLE_COLS；weekly/monthly 表无 preclose 列，多余键自动忽略）。"""
+    from db import _TABLE_COLS
+    cols = _TABLE_COLS[(kind, freq)]
+    daily = freq == "daily"
+    out = []
+    for _, r in df.iterrows():
+        vals = {"date": r["date"], "code": code, "open": r["open"],
+                "high": r["high"], "low": r["low"], "close": r["close"],
+                "volume": r["volume"], "amount": r["amount"],
+                "adjustflag": adjustflag, "turn": r["turn"],
+                "pctChg": r["pctChg"]}
+        if daily:
+            vals.update({"preclose": r["preclose"], "tradestatus": "1",
+                         "isST": "0"})
+            if kind == "etf":  # 新数据源无估值列
+                vals.update({"peTTM": None, "pbMRQ": None, "psTTM": None,
+                             "pcfNcfTTM": None})
+        out.append([vals.get(c) for c in cols])
+    return out
+
+
+def _fetch_one_kline(conn, kind, code, freq, adjustflag, start, end,
+                     max_retries):
+    """抓单只 (code, freq, adjustflag)：日 K 来自数据源，周/月本地重采样。
+    数据源失败（返回 None）抛 RuntimeError 由主循环记 fail。"""
+    if kind == "etf":
+        df = src.etf_kline(code, start, end, max_retries=max_retries)
+    else:
+        df = src.stock_kline(code, start, end,
+                             adjust=_ADJUST_SINA[adjustflag],
+                             max_retries=max_retries)
+    if df is None:
+        raise RuntimeError(f"{kind} kline {code} {adjustflag} fetch failed")
+    if df.empty:
+        return 0
+    if freq in ("weekly", "monthly"):
+        df = src.resample_kline(df, freq)
+    insert_kline(conn, kind, freq, adjustflag,
+                 _kline_rows(kind, freq, df, code, adjustflag))
+    return len(df)
+
+
+def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
+                      today, sleep_s, max_retries, incremental=False):
+    """K 线抓取主循环（股票/ETF 共用）。
+
+    - 断点续传：非 force 跳过 last_fetch_date==today 的证券；
+    - 增量：按 _due_freqs 门控，起始日取该频率最后一根日期往前回退
+      _INC_PAD_DAYS（保证周/月重采样周期完整）；退市（status='0'）跳过；
+    - 标记：全量需三档全集成功；增量只需本轮应更频率全部成功；
+    - 每只抓完即提交；单只失败记 warning 不中断。
+    """
+    import time as _time
+    today = today or date.today().isoformat()
+    today_dt = date.fromisoformat(today)
+    fullset = set(freqs) == {"daily", "weekly", "monthly"}
+    rows = conn.execute(f"SELECT code, status FROM {table}").fetchall()
+    codes = [r["code"] for r in rows]
+    delisted = ({r["code"] for r in rows if r["status"] == "0"}
+                if incremental else set())
+    done = set() if force else fetched_today(conn, kind, today)
+    max_dates = ({f: kline_max_date(conn, kind, f) for f in freqs}
+                 if incremental else {})
+    n_ok = n_fail = n_skip = 0
+    total = len(codes)
+    for idx, code in enumerate(codes, 1):
+        tag = f"[{kind}-kline] {idx}/{total} {code}"
+        if code in done:
+            n_skip += 1
+            print(f"{tag} skip(fetched) ok={n_ok} fail={n_fail} skip={n_skip}",
+                  flush=True)
+            continue
+        if code in delisted:
+            n_skip += 1
+            print(f"{tag} skip(delisted) ok={n_ok} fail={n_fail} skip={n_skip}",
+                  flush=True)
+            continue
+        if incremental:
+            last_dates = {f: max_dates[f].get(code) for f in freqs}
+            loop_freqs = _due_freqs(freqs, today_dt, last_dates)
+            if not loop_freqs:
+                n_skip += 1
+                print(f"{tag} skip(not due) ok={n_ok} fail={n_fail} "
+                      f"skip={n_skip}", flush=True)
+                continue
+        else:
+            last_dates = {}
+            loop_freqs = freqs
+        success = True
+        try:
+            for freq in loop_freqs:
+                if incremental:
+                    base = last_dates.get(freq) or start
+                    pad = _INC_PAD_DAYS[freq]
+                    fstart = (date.fromisoformat(base)
+                              - timedelta(days=pad)).isoformat()
+                else:
+                    fstart = start
+                for adj in adjusts:
+                    _fetch_one_kline(conn, kind, code, freq, adj, fstart, end,
+                                     max_retries)
+            n_ok += 1
+        except Exception as e:  # 网络/解析/入库失败均记 fail 继续
+            log.warning("kline %s failed: %s", code, e)
+            n_fail += 1
+            success = False
+        if success and (incremental or fullset):
+            mark_fetched(conn, kind, code, today)
+        conn.commit()
+        print(f"{tag} ok={n_ok} fail={n_fail} skip={n_skip}", flush=True)
+        if idx < total and sleep_s > 0:
+            _time.sleep(sleep_s)
+    return n_ok, n_fail
+
+
+def fetch_stock_kline(conn, freqs, adjusts, start, end, force=False,
+                      today=None, incremental=False, sleep_s=0.5,
+                      max_retries=3):
+    """按 stock_info 全表抓 A 股 K 线（周/月由日 K 重采样）。"""
+    return _kline_fetch_loop(conn, "stock", "stock_info", freqs, adjusts,
+                             start, end, force, today, sleep_s, max_retries,
+                             incremental)
+
+
+def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False,
+                    today=None, incremental=False, sleep_s=0.5,
+                    max_retries=3):
+    """按 etf_info 全表抓 ETF K 线（仅不复权，adjusts 强制 ['3']）。"""
+    if set(adjusts) != {"3"}:
+        log.warning("ETF 仅支持不复权，--adjust %s 被强制为 ['3']", adjusts)
+        adjusts = ["3"]
+    return _kline_fetch_loop(conn, "etf", "etf_info", freqs, adjusts,
+                             start, end, force, today, sleep_s, max_retries,
+                             incremental)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Akshare 数据采集")
     parser.add_argument("--db", default=os.path.join(ROOT, "data", "market.db"))

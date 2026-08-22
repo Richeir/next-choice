@@ -335,10 +335,14 @@ def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
         except Exception as e:  # 防御：单只意外异常不中断整体
             log.warning("stock_info %s unexpected error: %s", code, e)
             n_fail += 1
+            print(f"[stock-info] {idx}/{total} {code} ok={n_ok}"
+                  f" fail={n_fail}", flush=True)
             continue
         if basic is None and quote is None:
             log.warning("stock_info %s: both xq calls failed", code)
             n_fail += 1
+            print(f"[stock-info] {idx}/{total} {code} ok={n_ok}"
+                  f" fail={n_fail}", flush=True)
             continue
         basic = basic or {}
         quote = quote or {}
@@ -359,9 +363,8 @@ def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
                          " WHERE code=?", vals)
             conn.commit()
         n_ok += 1
-        if idx % 50 == 0 or idx == total:
-            print(f"[stock-info] {idx}/{total} ok={n_ok} fail={n_fail}",
-                  flush=True)
+        print(f"[stock-info] {idx}/{total} {code} ok={n_ok} fail={n_fail}",
+              flush=True)
         if idx < total and sleep_s > 0:
             _time.sleep(sleep_s)
     return n_ok, n_fail
@@ -386,10 +389,14 @@ def fetch_etf_info(conn, limit=None, sleep_s=0.5, max_retries=3):
         except Exception as e:  # 防御：单只意外异常不中断整体
             log.warning("etf_info %s unexpected error: %s", code, e)
             n_fail += 1
+            print(f"[etf-info] {idx}/{total} {code} ok={n_ok} fail={n_fail}",
+                  flush=True)
             continue
         if quote is None:
             log.warning("etf_info %s: xq quote failed", code)
             n_fail += 1
+            print(f"[etf-info] {idx}/{total} {code} ok={n_ok} fail={n_fail}",
+                  flush=True)
             continue
         mapping = {"high_52w": quote.get("high_52w"),
                    "low_52w": quote.get("low_52w")}
@@ -409,9 +416,8 @@ def fetch_etf_info(conn, limit=None, sleep_s=0.5, max_retries=3):
             log.warning("etf_info %s: quote ok but no 52w fields,"
                         " will retry next run", code)
         n_ok += 1
-        if idx % 50 == 0 or idx == total:
-            print(f"[etf-info] {idx}/{total} ok={n_ok} fail={n_fail}",
-                  flush=True)
+        print(f"[etf-info] {idx}/{total} {code} ok={n_ok} fail={n_fail}",
+              flush=True)
         if idx < total and sleep_s > 0:
             _time.sleep(sleep_s)
     return n_ok, n_fail

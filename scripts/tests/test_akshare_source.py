@@ -172,10 +172,13 @@ class TestListStocks:
 
 class TestListEtfs:
     def test_maps_sina_columns(self, monkeypatch):
-        raw = pd.DataFrame([{"代码": "510050", "名称": "华夏上证50ETF"}])
+        raw = pd.DataFrame([{"代码": "sh510050", "名称": "华夏上证50ETF"},
+                            {"代码": "sz159915", "名称": "创业板ETF"}])
         monkeypatch.setattr(src.ak, "fund_etf_category_sina",
                             lambda symbol: raw)
-        assert src.list_etfs() == [{"code": "510050", "name": "华夏上证50ETF"}]
+        assert src.list_etfs() == [
+            {"code": "510050", "name": "华夏上证50ETF", "market": "SH"},
+            {"code": "159915", "name": "创业板ETF", "market": "SZ"}]
 
 
 class TestEtfMaps:

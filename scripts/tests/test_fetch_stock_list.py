@@ -45,3 +45,16 @@ class TestUpdateStockList:
         row = conn.execute(
             "SELECT market FROM stock_info WHERE code='000001'").fetchone()
         assert row["market"] == "SZ"
+
+    def test_unknown_segment_skipped(self, conn, monkeypatch):
+        rows = _stocks() + [{"code": "920045", "name": "北交所样本",
+                             "pe_ttm": None, "total_market_cap": None,
+                             "last_close": 1.0, "last_pct_chg": 0.0,
+                             "last_amount": 1.0}]
+        monkeypatch.setattr(fetch_data.src, "list_stocks",
+                            lambda **kw: rows)
+        n_ok, n_skip = fetch_data.update_stock_list(conn)
+        assert (n_ok, n_skip) == (2, 1)
+        assert conn.execute(
+            "SELECT count(*) c FROM stock_info WHERE code='920045'"
+        ).fetchone()["c"] == 0

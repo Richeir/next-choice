@@ -44,6 +44,7 @@ def update_stock_list(conn, max_retries=3):
     """腾讯全市场刷新 stock_info：列表 + 行情字段（金额单位元）。
 
     type 恒 '1'、status 恒 '1'（腾讯列表只含在交易证券；退市股旧行保留）。
+    未知号段（如北交所 92 开头）跳过并计入返回值的第二位（skip）。
     """
     rows = src.list_stocks(max_retries=max_retries)
     log.info("stock_zh_a_spot_tx -> %d stocks", len(rows))
@@ -52,18 +53,26 @@ def update_stock_list(conn, max_retries=3):
     sql = (f"INSERT OR REPLACE INTO stock_info ({cols}) "
            "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
     today = date.today().isoformat()
-    n_ok = 0
+    n_ok = n_skip = 0
     total = len(rows)
     for idx, r in enumerate(rows, 1):
-        conn.execute(sql, (r["code"], r["name"], market_of(r["code"]), "1",
+        try:
+            market = market_of(r["code"])
+        except ValueError:
+            # 未知号段（如北交所 92 开头）不在项目 SH/SZ 范围内，跳过
+            log.warning("skip %s: unknown code segment", r["code"])
+            n_skip += 1
+            continue
+        conn.execute(sql, (r["code"], r["name"], market, "1",
                            "1", today, r["last_close"], r["last_pct_chg"],
                            r["last_amount"], r["pe_ttm"],
                            r["total_market_cap"]))
         n_ok += 1
         if idx % 500 == 0 or idx == total:
             conn.commit()
-            print(f"[stock-list] {idx}/{total}", flush=True)
-    return n_ok, 0
+            print(f"[stock-list] {idx}/{total} ok={n_ok} skip={n_skip}",
+                  flush=True)
+    return n_ok, n_skip
 
 
 def update_etf_list(conn, max_retries=3):
@@ -80,8 +89,16 @@ def update_etf_list(conn, max_retries=3):
     total = len(etfs)
     for idx, e in enumerate(etfs, 1):
         s = scales.get(e["code"], {})
+        market = e.get("market")
+        if market is None:
+            try:
+                market = market_of(e["code"])
+            except ValueError:
+                log.warning("skip %s: unknown code segment", e["code"])
+                n_fail += 1
+                continue
         try:
-            conn.execute(sql, (e["code"], e["name"], market_of(e["code"]),
+            conn.execute(sql, (e["code"], e["name"], market,
                                "5", "1", s.get("ipo_date"),
                                cats.get(e["code"]), s.get("manager"),
                                s.get("fund_scale")))
@@ -414,8 +431,8 @@ def main(argv=None):
     conn = init_db(args.db)
     try:
         if args.update_stock_list:
-            n_ok, n_fail = update_stock_list(conn, args.max_retries)
-            print(f"done. db={args.db} stock_list ok={n_ok} fail={n_fail}")
+            n_ok, n_skip = update_stock_list(conn, args.max_retries)
+            print(f"done. db={args.db} stock_list ok={n_ok} skip={n_skip}")
         elif args.update_etf_list:
             n_ok, n_fail = update_etf_list(conn, args.max_retries)
             print(f"done. db={args.db} etf_list ok={n_ok} fail={n_fail}")

@@ -11,7 +11,7 @@
 | 股票周/月 K | —（本地重采样） | — | — | 数据源无直抓接口，由日 K 聚合：open 首值 / close 尾值 / high max / low min / volume+amount 求和 |
 | 个股基本信息 | `stock_individual_basic_info_xq` | 雪球 | 逐只（`SH600000` 式） | `org_name_cn` 全称、`affiliate_industry.ind_name` 行业、`listed_date` 上市日期（毫秒时间戳） |
 | 个股实时估值 | `stock_individual_spot_xq` | 雪球 | 逐只 | `市净率`、`52周最高`、`52周最低`、`资产净值/总市值`（元） |
-| ETF 列表 | `fund_etf_category_sina`（参数 `"ETF基金"`） | 新浪 | 一次拉全量 | 字段：`代码`（6 位）、`名称` |
+| ETF 列表 | `fund_etf_category_sina`（参数 `"ETF基金"`） | 新浪 | 一次拉全量 | 字段：`代码`（带小写前缀如 `sh510050`，脚本剥离并用于市场判断）、`名称` |
 | ETF 日 K | `fund_etf_hist_sina` | 新浪 | 逐只 | **仅不复权**；返回全量历史，脚本本地按日期过滤；含 `prevclose` |
 | ETF 类别 | `fund_etf_category_ths`（参数 `"ETF基金"`） | 同花顺 | 一次拉全量 | `基金代码` → `基金类型` |
 | ETF 规模/管理人 | `fund_scale_open_sina` | 新浪 | 一次拉全量 | 覆盖全部开放式基金（含 ETF），`总募集规模`（万→元）、`基金经理`、`成立日期` |
@@ -41,6 +41,9 @@
 5. **`etf_kline_daily` 估值列（`peTTM` 等）恒为 `NULL`**：新数据源不提供。
 6. **退市证券无标记**：退市股不再出现在腾讯列表中，其旧数据行保留但不再
    更新（`status` 不改为 `'0'`）。
+7. **交易所新号段**：`market_of` 号段规则可能滞后于交易所新号段（如沪市
+   ETF 新号段 `551`）。股票列表（腾讯源返回带前缀代码）与 ETF 列表（新浪源带前缀）
+   均优先用源前缀判断市场；未知号段的股票（如北交所 `92` 开头）跳过。
 
 ## 4. 抓取计划
 

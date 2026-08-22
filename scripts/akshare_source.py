@@ -153,11 +153,19 @@ def list_stocks(max_retries=3):
 
 
 def list_etfs(max_retries=3):
-    """新浪 ETF 列表。"""
+    """新浪 ETF 列表。`代码` 列带小写前缀（如 sz159998），剥离后作为 code；
+    前缀同时给出市场（'SH'/'SZ'，新号段不依赖号段规则）；无前缀时 market 为 None。"""
     df = fetch_with_retry(ak.fund_etf_category_sina, symbol="ETF基金",
                           max_retries=max_retries)
-    return [{"code": str(r["代码"]), "name": r["名称"]}
-            for _, r in df.iterrows()]
+    out = []
+    for _, r in df.iterrows():
+        raw = str(r["代码"])
+        if raw[:2] in ("sh", "sz"):
+            out.append({"code": raw[2:], "name": r["名称"],
+                        "market": "SH" if raw[:2] == "sh" else "SZ"})
+        else:
+            out.append({"code": raw, "name": r["名称"], "market": None})
+    return out
 
 
 def etf_category_map(max_retries=3):

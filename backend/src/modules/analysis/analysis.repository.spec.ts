@@ -37,12 +37,12 @@ function makeInsert(overrides: Partial<AnalysisInsert> = {}): AnalysisInsert {
 describe('AnalysisRepository.insertAnalysis', () => {
   it('写入分析新列（dims/model/prompt_version）并可重复 UPSERT', () => {
     const { db, repo } = setup();
-    repo.insertAnalysis('stock', 'sh.600000', makeInsert());
-    repo.insertAnalysis('stock', 'sh.600000', makeInsert({ score: 90, rating: 'S+' }));
+    repo.insertAnalysis('stock', '600000', makeInsert());
+    repo.insertAnalysis('stock', '600000', makeInsert({ score: 90, rating: 'S+' }));
 
     const conn = db.getConnection();
     const rows = conn
-      .prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`)
+      .prepare(`SELECT * FROM stock_analysis WHERE code = '600000'`)
       .all() as Record<string, unknown>[];
     expect(rows).toHaveLength(1); // ON CONFLICT 更新而非新增
     expect(rows[0].score).toBe(90);

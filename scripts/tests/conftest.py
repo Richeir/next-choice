@@ -6,7 +6,7 @@ import pytest
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "e2e: real-network BaoStock end-to-end tests")
+    config.addinivalue_line("markers", "e2e: real-network Akshare end-to-end tests")
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

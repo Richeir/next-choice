@@ -1,44 +1,55 @@
-"""fetch_data 模块的纯逻辑单元测试（不联网）。"""
-from datetime import date, timedelta
-
+"""fetch_data run_fetch（--codes 路径）与 CLI 解析测试。"""
+import pandas as pd
 import pytest
 
-from fetch_data import _kline_fields, resolve_date_range
-
-YEARS = 5
-WINDOW_DAYS = 365 * YEARS
-
-
-class TestKlineFields:
-    def test_valid(self):
-        assert _kline_fields("stock", "daily").startswith("date,code")
-
-    def test_etf_daily_has_valuation_cols(self):
-        fields = _kline_fields("etf", "daily")
-        assert "peTTM" in fields and "pcfNcfTTM" in fields
-
-    @pytest.mark.parametrize("kind,freq", [("bogus", "daily"), ("stock", "bogus")])
-    def test_invalid(self, kind, freq):
-        with pytest.raises(ValueError):
-            _kline_fields(kind, freq)
+import db
+import fetch_data
+from conftest import SCHEMA
 
 
-class TestResolveDateRange:
-    def test_both_none_defaults_to_5y_window(self):
-        start, end = resolve_date_range(None, None, years=YEARS)
-        assert end == date.today().isoformat()
-        assert start == (date.today() - timedelta(days=WINDOW_DAYS)).isoformat()
+@pytest.fixture()
+def conn(tmp_path):
+    return db.init_db(str(tmp_path / "test.db"), SCHEMA)
 
-    def test_end_given_start_backfilled(self):
-        start, end = resolve_date_range(None, "2024-01-31", years=YEARS)
-        assert end == "2024-01-31"
-        assert start == "2019-02-01"  # 2024-01-31 往前 5 年
 
-    def test_explicit_start_end_kept(self):
-        start, end = resolve_date_range("2024-01-01", "2024-01-31", years=YEARS)
-        assert start == "2024-01-01"
-        assert end == "2024-01-31"
+class TestRunFetch:
+    def test_stock_codes(self, conn, monkeypatch):
+        monkeypatch.setattr(fetch_data.src, "stock_basic",
+                            lambda code, **kw: {"full_name": "全称",
+                                                "industry": "银行",
+                                                "ipo_date": "1999-11-10"})
+        monkeypatch.setattr(fetch_data.src, "stock_kline",
+                            lambda *a, **kw: pd.DataFrame(
+                                [("2024-01-02", 10, 11, 9, 10.5, 9.9,
+                                  1000, 1e4, 1.0, 6.0)],
+                                columns=fetch_data.src.KLINE_COLS))
+        fetch_data.run_fetch(conn, ["600000"], ["daily"], ["3"],
+                             "2024-01-01", "2024-01-31")
+        info = conn.execute("SELECT * FROM stock_info WHERE code='600000'"
+                            ).fetchone()
+        assert info["code_name"] == "全称"  # 无列表源时用 full_name
+        assert info["industry"] == "银行"
+        assert conn.execute("SELECT count(*) c FROM stock_kline_daily"
+                            ).fetchone()["c"] == 1
 
-    def test_custom_years(self):
-        start, _ = resolve_date_range(None, "2024-01-31", years=1)
-        assert start == "2023-01-31"
+    def test_etf_codes(self, conn, monkeypatch):
+        monkeypatch.setattr(fetch_data.src, "etf_kline",
+                            lambda *a, **kw: pd.DataFrame(
+                                [("2024-01-02", 3.0, 3.1, 2.9, 3.05, 2.99,
+                                  500, 1500, None, 2.0)],
+                                columns=fetch_data.src.KLINE_COLS))
+        fetch_data.run_fetch(conn, ["510050"], ["daily"], ["3"],
+                             "2024-01-01", "2024-01-31")
+        assert conn.execute("SELECT count(*) c FROM etf_kline_daily"
+                            ).fetchone()["c"] == 1
+
+
+class TestParser:
+    def test_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            fetch_data.build_parser().parse_args(
+                ["--update-stock-list", "--update-etf-list"])
+
+    def test_requires_command(self):
+        with pytest.raises(SystemExit):
+            fetch_data.build_parser().parse_args([])

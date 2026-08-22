@@ -16,8 +16,8 @@
 | ORM / 访问层 | better-sqlite3 | 11.x | 同步 SQLite 驱动 |
 | 数据库 | SQLite | 3.x | 本地持久化（内置） |
 | LLM SDK | OpenAI Node SDK（或对应厂商） | 4.x | 调用大模型 |
-| 数据源 | BaoStock | 0.8.x | Python Library，采集脚本 |
-| 采集脚本语言 | Python | 3.11+ | 独立脚本拉取 BaoStock |
+| 数据源 | Akshare | 1.18.x | Python Library，采集脚本（腾讯/新浪/雪球/同花顺源） |
+| 采集脚本语言 | Python | 3.11+ | 独立脚本拉取 Akshare |
 
 > 版本为锁定基线，后续如有升级需在本文档同步更新并标注变更原因。
 
@@ -38,8 +38,9 @@ next-choice/
 │   │   ├── config/    # 全局配置（含 LLM 提示词模板）
 │   │   └── main.ts
 │   └── package.json
-├── scripts/           # Python 采集脚本（BaoStock）
-│   └── fetch_data.py
+├── scripts/           # Python 采集脚本（Akshare）
+│   ├── fetch_data.py
+│   └── akshare_source.py
 ├── data/              # SQLite 数据库文件（本地）
 └── doc/               # 本文档目录
 ```
@@ -50,7 +51,7 @@ next-choice/
 - **React 18**：并发特性稳定，生态成熟。
 - **better-sqlite3**：同步 API，Nest.js 内使用简单直观，适合本地单机 SQLite。
 - **Vite 5**：开发体验好、启动快，配合 React 主流方案。
-- **BaoStock 0.8.x**：数据源固定版本，避免上游 API 变动影响采集。
+- **Akshare 1.18.x**：数据源固定版本，避免上游接口变动影响采集（东财源在当前网络不可用，仅用非东财源，见 doc/akshare-api.md）。
 
 ## 4. 环境要求
 

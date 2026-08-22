@@ -38,31 +38,31 @@ describe('JobManagerService', () => {
   it('同一标的进行中任务去重，done 后可重新创建', () => {
     const db = createDb();
     const service = new JobManagerService(db);
-    const j1 = service.create('stock', 'sh.600000');
+    const j1 = service.create('stock', '600000');
     expect(j1.status).toBe('pending');
-    expect(service.create('stock', 'sh.600000').id).toBe(j1.id);
-    expect(service.create('etf', 'sh.600000').id).not.toBe(j1.id); // 不同类型不去重
+    expect(service.create('stock', '600000').id).toBe(j1.id);
+    expect(service.create('etf', '600000').id).not.toBe(j1.id); // 不同类型不去重
   });
 
   it('任务状态与结果落库，新实例可从 DB 查询（重启恢复）', async () => {
     const db = createDb();
     const s1 = new JobManagerService(db);
-    const job = s1.create('stock', 'sh.600000');
-    await s1.run(job.id, async () => ({ code: 'sh.600000' }));
+    const job = s1.create('stock', '600000');
+    await s1.run(job.id, async () => ({ code: '600000' }));
 
     const s2 = new JobManagerService(db); // 模拟重启
     const restored = s2.get(job.id);
     expect(restored).toBeDefined();
     expect(restored!.status).toBe('done');
-    expect(restored!.result).toEqual({ code: 'sh.600000' });
+    expect(restored!.result).toEqual({ code: '600000' });
   });
 
   it('重启后中断的 pending/running 任务被标记 failed，done 任务保留', async () => {
     const db = createDb();
     const s1 = new JobManagerService(db);
-    const running = s1.create('stock', 'sh.600001');
+    const running = s1.create('stock', '600001');
     s1.update(running.id, { status: 'running' });
-    const done = s1.create('etf', 'sh.510010');
+    const done = s1.create('etf', '510010');
     await s1.run(done.id, async () => 'ok');
 
     const s2 = new JobManagerService(db); // 模拟重启
@@ -96,7 +96,7 @@ describe('JobManagerService', () => {
   it('任务失败时记录错误并可查询', async () => {
     const db = createDb();
     const service = new JobManagerService(db);
-    const job = service.create('stock', 'sh.600001');
+    const job = service.create('stock', '600001');
     await service.run(job.id, async () => {
       throw new Error('boom');
     });

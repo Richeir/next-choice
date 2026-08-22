@@ -135,12 +135,12 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
 function setupExecuteEnv() {
   const db = new DatabaseService({ path: ':memory:', schemaPath: SCHEMA });
   const conn = db.getConnection();
-  conn.prepare(`INSERT INTO stock_info (code, last_trade_date) VALUES ('sh.600000', '2024-02-29')`).run();
+  conn.prepare(`INSERT INTO stock_info (code, last_trade_date) VALUES ('600000', '2024-02-29')`).run();
   const insert = conn.prepare(
     `INSERT INTO stock_kline_daily
        (date, code, open, high, low, close, preclose, volume, amount, adjustflag,
         turn, tradestatus, pctChg, isST)
-     VALUES (?, 'sh.600000', 10, 10, 10, ?, 10, 1000000, 0, '2', 0, '1', 0, '0')`,
+     VALUES (?, '600000', 10, 10, 10, ?, 10, 1000000, 0, '2', 0, '1', 0, '0')`,
   );
   const base = new Date('2024-01-01T00:00:00Z');
   for (let i = 0; i < 60; i++) {
@@ -182,8 +182,8 @@ describe('AnalysisService.execute', () => {
         stability: 50,
       },
     });
-    await execute('stock', 'sh.600000');
-    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    await execute('stock', '600000');
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = '600000'`).get() as Record<string, unknown>;
     expect(String(row.date)).toBe('2024-02-29');
   });
 
@@ -198,8 +198,8 @@ describe('AnalysisService.execute', () => {
         reason: '估值合理，趋势向好',
       },
     });
-    await execute('stock', 'sh.600000');
-    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    await execute('stock', '600000');
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = '600000'`).get() as Record<string, unknown>;
     expect(JSON.parse(row.dims as string)).toEqual({ trend: 70, momentum: 60, valuation: 55, volume: 65, stability: 50 });
     expect(row.model).toBe('gpt-4o');
     expect(String(row.prompt_version)).toMatch(/^[0-9a-f]{8}$/);
@@ -210,9 +210,9 @@ describe('AnalysisService.execute', () => {
 
   it('LLM 不可用时降级：model/prompt_version 为 null，dims 为技术面维度分', async () => {
     const { execute, conn, llm } = makeExecuteService(); // llmResult = null
-    await execute('stock', 'sh.600000');
+    await execute('stock', '600000');
     expect(llm.analyze).toHaveBeenCalled();
-    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = 'sh.600000'`).get() as Record<string, unknown>;
+    const row = conn.prepare(`SELECT * FROM stock_analysis WHERE code = '600000'`).get() as Record<string, unknown>;
     expect(row.model).toBeNull();
     expect(row.prompt_version).toBeNull();
     const dims = JSON.parse(row.dims as string) as Record<string, number>;
@@ -247,8 +247,8 @@ describe('AnalysisService.trigger / getJob', () => {
       jobs,
       makeConfig(),
     );
-    const r1 = service.trigger('stock', 'sh.600000');
-    const r2 = service.trigger('stock', 'sh.600000');
+    const r1 = service.trigger('stock', '600000');
+    const r2 = service.trigger('stock', '600000');
     expect(r2.jobId).toBe(r1.jobId); // per-code 去重
 
     // 等待任务完成（轮询 DB 状态）

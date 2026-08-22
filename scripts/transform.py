@@ -1,26 +1,36 @@
-"""BaoStock 原始数据到 SQLite 的转换工具。
-
-BaoStock 返回的字段全部是 str（数字字符串或空串）。本模块提供：
-- 数值/空串 -> REAL / NULL 转换
-- 带交易所前缀代码 -> 市场缩写（SH/SZ）推断
-- K 线表名（kind x frequency）映射
-"""
+"""数据转换工具：类型清洗、市场推断、K 线表名。"""
+import math
 
 
 def to_float(value):
-    """把 BaoStock 的字符串数值转为 float；空串/None 转为 None。"""
+    """把字符串/数值转 float；None/空串/NaN 转 None。"""
     if value is None or value == "":
         return None
-    return float(value)
+    f = float(value)
+    if math.isnan(f):
+        return None
+    return f
+
+
+_STOCK_SH = ("60", "68")
+_STOCK_SZ = ("00", "30")
+_ETF_SH = ("51", "56", "58")
+_ETF_SZ = ("15", "16")
 
 
 def market_of(code):
-    """由带交易所前缀的 code 推断市场：sh. -> SH，sz. -> SZ。"""
-    if code.startswith("sh."):
+    """由 6 位纯数字 code 的号段推断市场：返回 'SH' / 'SZ'。"""
+    prefix = code[:2]
+    if prefix in _STOCK_SH + _ETF_SH:
         return "SH"
-    if code.startswith("sz."):
+    if prefix in _STOCK_SZ + _ETF_SZ:
         return "SZ"
-    raise ValueError(f"unknown code prefix: {code!r}")
+    raise ValueError(f"unknown code segment: {code!r}")
+
+
+def is_etf_code(code):
+    """由 6 位纯数字 code 的号段判断是否为 ETF。"""
+    return code[:2] in _ETF_SH + _ETF_SZ
 
 
 def kline_table(kind, freq):

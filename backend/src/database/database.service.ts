@@ -53,8 +53,6 @@ export class DatabaseService implements OnApplicationShutdown {
       ['etf_analysis', 'dims', 'TEXT'],
       ['etf_analysis', 'model', 'TEXT'],
       ['etf_analysis', 'prompt_version', 'TEXT'],
-      ['stock_info', 'llm_backfill_at', 'TEXT'],
-      ['etf_info', 'llm_backfill_at', 'TEXT'],
     ];
     for (const [table, column, ddl] of adds) {
       try {

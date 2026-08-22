@@ -25,22 +25,22 @@ cd scripts
 # 3. 雪球逐只补齐个股字段（全称/行业/IPO/PB/52周），只处理未抓过的
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-info --limit 10
 
-# 3.5 雪球逐只补齐 ETF 字段（52周高低），只处理未抓过的
+# 4. 雪球逐只补齐 ETF 字段（52周高低），只处理未抓过的
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-etf-info --limit 10
 
-# 4. 按 stock_info 全量抓 A 股 K 线（周/月由日 K 本地重采样）
+# 5. 按 stock_info 全量抓 A 股 K 线（周/月由日 K 本地重采样）
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-kline \
     --freq daily,weekly,monthly --adjust 2,3 --start 2026-01-05
 
-# 5. ETF K 线（仅不复权，--adjust 会被强制为 3）
+# 6. ETF K 线（仅不复权，--adjust 会被强制为 3）
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-etf-kline \
     --freq daily,weekly,monthly --start 2026-01-05
 
-# 6. 日常增量（从每只证券最后一根 K 线日期开始，按频率门控）
+# 7. 日常增量（从每只证券最后一根 K 线日期开始，按频率门控）
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-kline \
     --freq daily,weekly,monthly --incremental
 
-# 7. 指定代码抓取（6 位纯数字，自动补 info 行）
+# 8. 指定代码抓取（6 位纯数字，自动补 info 行）
 .venv/bin/python fetch_data.py --db ../data/market.db \
     --codes 600000,510050 --freq daily,weekly,monthly --start 2024-01-01
 ```

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14 / akshare / pandas / sqlite3 / pytest（venv 在 `scripts/.venv`，akshare 已安装）。
 
-**Spec:** `docs/superpowers/specs/2026-08-22-akshare-migration-design.md`
+**Spec:** `doc/superpowers/specs/2026-08-22-akshare-migration-design.md`
 
 ## Global Constraints
 

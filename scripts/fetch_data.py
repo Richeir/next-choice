@@ -312,7 +312,10 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
                 for adj in adjusts:
                     _fetch_one_kline(conn, kind, code, freq, adj, fstart, end,
                                      max_retries)
-            _update_52w_from_kline(conn, kind, table, code, today)
+            try:
+                _update_52w_from_kline(conn, kind, table, code, today)
+            except Exception as e:  # 52w 回写失败不影响 K 线成功判定
+                log.warning("kline %s 52w update failed: %s", code, e)
             n_ok += 1
         except Exception as e:  # 网络/解析/入库失败均记 fail 继续
             log.warning("kline %s failed: %s", code, e)
@@ -494,6 +497,7 @@ def run_fetch(conn, codes, freqs, adjusts, start, end, max_retries=3):
                                  max_retries)
         _update_52w_from_kline(conn, kind, f"{kind}_info", code,
                                date.today().isoformat())
+        conn.commit()
         print(f"[codes] {code} done ({kind})", flush=True)
 
 

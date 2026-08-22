@@ -97,6 +97,19 @@ class TestUpdate52wOnKline:
         assert row["high_52w"] == 20
         assert row["low_52w"] == 5
 
+    def test_52w_update_failure_keeps_kline_ok(self, conn, monkeypatch):
+        """52w 回写异常不应计为 K 线抓取失败。"""
+        monkeypatch.setattr(fetch_data.src, "stock_kline",
+                            lambda *a, **kw: _two_days())
+
+        def boom(*a, **kw):
+            raise RuntimeError("boom")
+        monkeypatch.setattr(fetch_data, "_update_52w_from_kline", boom)
+        n_ok, n_fail = fetch_data.fetch_stock_kline(
+            conn, ["daily"], ["3"], "2024-01-01", "2024-01-31",
+            today="2024-01-31", sleep_s=0)
+        assert (n_ok, n_fail) == (1, 0)
+
     def test_not_covered_keeps_old_52w(self, conn, monkeypatch):
         # 日 K 覆盖不足 52 周窗口：保留雪球原值不覆盖
         conn.execute("UPDATE stock_info SET high_52w=999, low_52w=111")

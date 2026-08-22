@@ -1,4 +1,4 @@
-"""SQLite 数据库封装：建库、幂等写入 K 线、行情回填。
+"""SQLite 数据库封装：建库、幂等写入 K 线。
 
 schema 单一定义来源为 backend/database/schema.sql（与 Nest.js 后端共用），
 本模块负责读取并执行建表。
@@ -125,49 +125,8 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
             raise ValueError(
                 f"{table}: row has {len(row)} fields, expected {len(columns)}"
             )
-        # BaoStock 返回的 adjustflag 列恒为 '3'（与请求参数无关），即使请求前复权('2')；
-        # 落库应记录请求的复权方式，故以请求参数覆盖该列。
+        # 落库记录请求的复权方式，不信任数据源返回的 adjustflag 列。
         row[adj_idx] = adjustflag
         vals = [v if c in _RAW_COLS else to_float(v) for c, v in zip(columns, row)]
         conn.execute(sql, vals)
-    conn.commit()
-
-
-def backfill_stock_info(conn):
-    """用不复权日 K 回填 stock_info 的脚本可回填字段（取每 code 日期最大一行）。"""
-    conn.execute(
-        """
-        UPDATE stock_info
-        SET last_trade_date = k.date,
-            last_close      = k.close,
-            last_pct_chg    = k.pctChg
-        FROM (
-            SELECT code, date, close, pctChg,
-                   ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
-            FROM stock_kline_daily
-            WHERE adjustflag = '3'
-        ) AS k
-        WHERE stock_info.code = k.code AND k.rn = 1
-        """
-    )
-    conn.commit()
-
-
-def backfill_etf_info(conn):
-    """用不复权日 K 回填 etf_info 的脚本可回填字段（取每 code 日期最大一行）。"""
-    conn.execute(
-        """
-        UPDATE etf_info
-        SET last_trade_date = k.date,
-            last_close      = k.close,
-            last_pct_chg    = k.pctChg
-        FROM (
-            SELECT code, date, close, pctChg,
-                   ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
-            FROM etf_kline_daily
-            WHERE adjustflag = '3'
-        ) AS k
-        WHERE etf_info.code = k.code AND k.rn = 1
-        """
-    )
     conn.commit()

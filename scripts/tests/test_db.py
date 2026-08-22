@@ -1,4 +1,4 @@
-"""db 模块单元测试：建表、幂等写入、行情回填。全部用临时 SQLite 文件，不打网络。"""
+"""db 模块单元测试：建表、幂等写入。全部用临时 SQLite 文件，不打网络。"""
 import sqlite3
 
 import pytest
@@ -70,8 +70,7 @@ def test_insert_kline_wrong_table(conn):
 
 
 def test_insert_kline_stores_requested_adjustflag(conn):
-    # BaoStock 返回的 adjustflag 列恒为 '3'（与请求参数无关），即使请求前复权('2')；
-    # 落库应记录请求的复权方式，而非信任返回列。
+    # 落库应记录请求的复权方式，而非信任数据源返回的 adjustflag 列。
     db.insert_kline(
         conn,
         kind="stock",
@@ -99,56 +98,6 @@ def test_insert_kline_wrong_row_length(conn):
             adjustflag="3",
             rows=[["2024-01-02", "sh.600000", "6.63"]],
         )
-
-
-def test_stock_backfill(conn):
-    # 先插基础信息 + 两行不复权日 K（含 peTTM）
-    conn.execute(
-        "INSERT INTO stock_info (code, code_name, type, market) VALUES ('sh.600000','浦发银行','1','SH')"
-    )
-    db.insert_kline(
-        conn,
-        kind="stock",
-        freq="daily",
-        adjustflag="3",
-        rows=[
-            ["2024-01-02", "sh.600000", "6.63", "6.65", "6.60", "6.60",
-             "6.60", "22066700", "146066303", "3", "0.0752", "1", "-0.3021", "0"],
-            ["2024-01-05", "sh.600000", "6.60", "6.76", "6.59", "6.68",
-             "6.60", "44421387", "296976885", "3", "0.1513", "1", "0.9063", "0"],
-        ],
-    )
-    db.backfill_stock_info(conn)
-    row = conn.execute(
-        "SELECT last_trade_date, last_close, last_pct_chg FROM stock_info WHERE code='sh.600000'"
-    ).fetchone()
-    # 回填应取 date 最大的一行
-    assert tuple(row) == ("2024-01-05", 6.68, 0.9063)
-
-
-def test_etf_backfill(conn):
-    conn.execute(
-        "INSERT INTO etf_info (code, code_name, type, market) VALUES ('sh.510010','上证50ETF','5','SH')"
-    )
-    db.insert_kline(
-        conn,
-        kind="etf",
-        freq="daily",
-        adjustflag="3",
-        rows=[
-            ["2024-01-02", "sh.510010", "1.80", "1.83", "1.80", "1.82",
-             "1.80", "161200", "294216", "3", "0.1147", "1", "1.2735", "1",
-             "", "", "", ""],
-            ["2024-01-03", "sh.510010", "1.82", "1.84", "1.81", "1.83",
-             "1.81", "200000", "400000", "3", "0.2", "1", "0.5", "1",
-             "", "", "", ""],
-        ],
-    )
-    db.backfill_etf_info(conn)
-    row = conn.execute(
-        "SELECT last_trade_date, last_close, last_pct_chg FROM etf_info WHERE code='sh.510010'"
-    ).fetchone()
-    assert tuple(row) == ("2024-01-03", 1.83, 0.5)
 
 
 def test_schema_has_last_fetch_date(conn):

@@ -39,3 +39,25 @@ class TestFetchEtfKline:
         assert row["peTTM"] is None and row["pbMRQ"] is None
         assert row["psTTM"] is None and row["pcfNcfTTM"] is None
         assert row["preclose"] == 2.99
+
+
+class TestUpdate52wOnKline:
+    """K 线抓取成功后用不复权日 K 重算 52 周高低并回写 etf_info。"""
+
+    def test_covered_updates_52w(self, conn, monkeypatch):
+        conn.execute("INSERT INTO etf_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES ('2023-02-01','510050',3.2,2.8,'3')")
+        conn.execute("INSERT INTO etf_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES ('2023-01-10','510050',9.9,0.1,'3')")
+        conn.commit()
+        monkeypatch.setattr(fetch_data.src, "etf_kline", lambda *a, **kw: _df(
+            [("2024-01-30", 3.0, 3.1, 2.9, 3.05, 2.99, 500, 1500, None, 2.0)]))
+        fetch_data.fetch_etf_kline(conn, ["daily"], ["3"],
+                                   "2023-01-01", "2024-01-31",
+                                   today="2024-01-31", sleep_s=0)
+        row = conn.execute("SELECT high_52w, low_52w FROM etf_info"
+                           " WHERE code='510050'").fetchone()
+        assert row["high_52w"] == 3.2
+        assert row["low_52w"] == 2.8

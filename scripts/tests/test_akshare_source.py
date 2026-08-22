@@ -148,3 +148,77 @@ class TestKlineNormalize:
         df = src.etf_kline("510050", "2024-01-01", "2024-01-31")
         assert len(df) == 1
         assert df.iloc[0]["preclose"] == 3.0
+
+
+def _kv_df(pairs):
+    return pd.DataFrame(pairs, columns=["item", "value"])
+
+
+class TestListStocks:
+    def test_maps_tx_columns_and_units(self, monkeypatch):
+        raw = pd.DataFrame([{
+            "code": "sh600519", "name": "贵州茅台", "pe_ttm": 19.5,
+            "zsz": 15911.41, "zxj": 1272.83, "zdf": -1.45, "turnover": 427831,
+        }])
+        monkeypatch.setattr(src.ak, "stock_zh_a_spot_tx", lambda: raw)
+        rows = src.list_stocks()
+        assert rows[0] == {
+            "code": "600519", "name": "贵州茅台", "pe_ttm": 19.5,
+            "total_market_cap": pytest.approx(15911.41e8),
+            "last_close": 1272.83, "last_pct_chg": -1.45,
+            "last_amount": pytest.approx(427831e4),
+        }
+
+
+class TestListEtfs:
+    def test_maps_sina_columns(self, monkeypatch):
+        raw = pd.DataFrame([{"代码": "510050", "名称": "华夏上证50ETF"}])
+        monkeypatch.setattr(src.ak, "fund_etf_category_sina",
+                            lambda symbol: raw)
+        assert src.list_etfs() == [{"code": "510050", "name": "华夏上证50ETF"}]
+
+
+class TestEtfMaps:
+    def test_category_map(self, monkeypatch):
+        raw = pd.DataFrame([{"基金代码": "510050", "基金类型": "股票型"}])
+        monkeypatch.setattr(src.ak, "fund_etf_category_ths",
+                            lambda symbol: raw)
+        assert src.etf_category_map() == {"510050": "股票型"}
+
+    def test_fund_scale_map(self, monkeypatch):
+        raw = pd.DataFrame([{
+            "基金代码": "510300", "总募集规模": 3296860.0,
+            "基金经理": "柳军", "成立日期": "2012-05-04"}])
+        monkeypatch.setattr(src.ak, "fund_scale_open_sina", lambda: raw)
+        m = src.fund_scale_map()
+        assert m["510300"] == {"fund_scale": pytest.approx(3296860.0e4),
+                               "manager": "柳军", "ipo_date": "2012-05-04"}
+
+
+class TestStockInfoXq:
+    def test_basic(self, monkeypatch):
+        raw = _kv_df([
+            ("org_name_cn", "上海浦东发展银行股份有限公司"),
+            ("listed_date", 942163200000),  # 1999-11-10 UTC+8
+            ("affiliate_industry", {"ind_code": "BK0055", "ind_name": "银行"}),
+        ])
+        monkeypatch.setattr(src.ak, "stock_individual_basic_info_xq",
+                            lambda symbol: raw)
+        info = src.stock_basic("600000")
+        assert info == {"full_name": "上海浦东发展银行股份有限公司",
+                        "industry": "银行", "ipo_date": "1999-11-10"}
+
+    def test_quote(self, monkeypatch):
+        raw = _kv_df([("市净率", 0.5), ("52周最高", 13.6), ("52周最低", 8.1),
+                      ("资产净值/总市值", 3.01e11)])
+        monkeypatch.setattr(src.ak, "stock_individual_spot_xq",
+                            lambda symbol: raw)
+        assert src.stock_quote("600000") == {
+            "pb": 0.5, "high_52w": 13.6, "low_52w": 8.1,
+            "total_market_cap": 3.01e11}
+
+    def test_basic_failure_returns_none(self, monkeypatch):
+        def boom(symbol):
+            raise requests.exceptions.ConnectionError("boom")
+        monkeypatch.setattr(src.ak, "stock_individual_basic_info_xq", boom)
+        assert src.stock_basic("600000", max_retries=0) is None

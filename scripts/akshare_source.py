@@ -127,3 +127,101 @@ def resample_kline(df, freq):
     agg["pctChg"] = ((agg["close"] - agg["preclose"]) / agg["preclose"]) * 100
     agg["turn"] = float("nan")
     return agg[KLINE_COLS]
+
+
+from datetime import datetime, timedelta, timezone
+
+_CST = timezone(timedelta(hours=8))
+
+
+def list_stocks(max_retries=3):
+    """腾讯全市场 A 股实时行情 -> 标准化 dict 列表。
+    失败抛异常：列表是全量刷新的前提，不应静默降级。"""
+    df = fetch_with_retry(ak.stock_zh_a_spot_tx, max_retries=max_retries)
+    out = []
+    for _, r in df.iterrows():
+        out.append({
+            "code": strip_prefix(r["code"]),
+            "name": r["name"],
+            "pe_ttm": float(r["pe_ttm"]) if pd.notna(r["pe_ttm"]) else None,
+            "total_market_cap": yi_to_yuan(r["zsz"]),
+            "last_close": float(r["zxj"]) if pd.notna(r["zxj"]) else None,
+            "last_pct_chg": float(r["zdf"]) if pd.notna(r["zdf"]) else None,
+            "last_amount": wan_to_yuan(r["turnover"]),
+        })
+    return out
+
+
+def list_etfs(max_retries=3):
+    """新浪 ETF 列表。"""
+    df = fetch_with_retry(ak.fund_etf_category_sina, symbol="ETF基金",
+                          max_retries=max_retries)
+    return [{"code": str(r["代码"]), "name": r["名称"]}
+            for _, r in df.iterrows()]
+
+
+def etf_category_map(max_retries=3):
+    """同花顺 ETF 类别：code -> 基金类型。"""
+    df = fetch_with_retry(ak.fund_etf_category_ths, symbol="ETF基金",
+                          max_retries=max_retries)
+    return {str(r["基金代码"]): r["基金类型"] for _, r in df.iterrows()}
+
+
+def fund_scale_map(max_retries=3):
+    """新浪开放式基金规模表：code -> {fund_scale(元), manager, ipo_date}。
+    该表覆盖全部开放式基金（含 ETF），多余条目由调用方按列表过滤。"""
+    df = fetch_with_retry(ak.fund_scale_open_sina, max_retries=max_retries)
+    out = {}
+    for _, r in df.iterrows():
+        est = str(r["成立日期"])[:10] if pd.notna(r["成立日期"]) else None
+        out[str(r["基金代码"])] = {
+            "fund_scale": wan_to_yuan(r["总募集规模"]),
+            "manager": r["基金经理"] if pd.notna(r["基金经理"]) else None,
+            "ipo_date": est,
+        }
+    return out
+
+
+def _xq_kv(fetch_fn, code, max_retries):
+    """雪球 item/value 两列 DataFrame -> dict。失败返回 None。"""
+    try:
+        df = fetch_with_retry(fetch_fn, symbol=to_xq_code(code),
+                              max_retries=max_retries)
+    except Exception as e:
+        log.warning("xq fetch %s failed: %s", code, e)
+        return None
+    return dict(zip(df["item"], df["value"]))
+
+
+def stock_basic(code, max_retries=3):
+    """雪球个股基本信息 -> {full_name, industry, ipo_date}。"""
+    kv = _xq_kv(ak.stock_individual_basic_info_xq, code, max_retries)
+    if kv is None:
+        return None
+    ipo = None
+    if kv.get("listed_date") is not None:
+        ipo = datetime.fromtimestamp(kv["listed_date"] / 1000,
+                                     _CST).strftime("%Y-%m-%d")
+    ind = kv.get("affiliate_industry")
+    return {
+        "full_name": kv.get("org_name_cn"),
+        "industry": ind.get("ind_name") if isinstance(ind, dict) else None,
+        "ipo_date": ipo,
+    }
+
+
+def stock_quote(code, max_retries=3):
+    """雪球个股实时 -> {pb, high_52w, low_52w, total_market_cap}。"""
+    kv = _xq_kv(ak.stock_individual_spot_xq, code, max_retries)
+    if kv is None:
+        return None
+
+    def num(k):
+        v = kv.get(k)
+        if v is None or v == "" or pd.isna(v):
+            return None
+        return float(v)
+
+    return {"pb": num("市净率"), "high_52w": num("52周最高"),
+            "low_52w": num("52周最低"),
+            "total_market_cap": num("资产净值/总市值")}

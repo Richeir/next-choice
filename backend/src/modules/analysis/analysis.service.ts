@@ -54,11 +54,14 @@ export class AnalysisService {
     if (!info) throw new NotFoundException(`${type} ${code} not found`);
 
     const config = this.config.get();
+    // 股票用前复权（'2'）做趋势/技术分析；ETF 采集侧仅存不复权（'3'）数据
+    // （新浪源不支持 ETF 复权），硬编码 '2' 会查不到任何 K 线导致分析失败。
+    const adjustflag = type === 'stock' ? '2' : '3';
     const klineQuery: KlineQuery = {
       type,
       code,
       frequency: 'daily',
-      adjustflag: '2', // 前复权，用于趋势/技术分析
+      adjustflag,
       limit: config.klineLimit,
     };
     const klineRows = this.klineRepo.list(klineQuery);

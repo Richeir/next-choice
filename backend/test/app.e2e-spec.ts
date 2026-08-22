@@ -220,9 +220,8 @@ describe('Backend e2e (Issue #6)', () => {
     expect(analysis.body.items[0].score).toBeGreaterThan(0);
   });
 
-  it('GET /api/jobs/nonexistent 返回 failed', async () => {
-    const res = await request(app.getHttpServer()).get('/api/jobs/nope').expect(200);
-    expect(res.body.status).toBe('failed');
+  it('GET /api/jobs/nonexistent 返回 404（而非假 failed 状态）', async () => {
+    await request(app.getHttpServer()).get('/api/jobs/nope').expect(404);
   });
 
   it('POST /api/stocks/zz.999999/analyze 不存在返回 404', async () => {

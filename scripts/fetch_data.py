@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import akshare_source as src
 from db import (fetched_today, init_db, insert_kline, kline_max_date,
                 mark_fetched)
-from transform import is_etf_code, market_of
+from transform import is_etf_code, kline_table, market_of
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -157,6 +157,30 @@ def _inc_fstart(freq, base_date, fallback):
     return (d - timedelta(days=1)).isoformat()
 
 
+# 增量窗口向前扩展的自然日数：窗口首行的 preclose=上一根 close，需要窗口前
+# 至少一根历史；按自然日回退须容纳周末与长假（周线需覆盖前一个完整周，
+# 月线需覆盖前一个完整月）。
+_PAD = {"daily": 8, "weekly": 12, "monthly": 40}
+
+
+def _pad_start(freq, base_start, full_start):
+    """把抓取起点向前扩展以获取窗口首行的 preclose/pctChg 上下文。
+
+    base_start 为真正的入库起点（_inc_fstart 对齐后的起点或 --start）；
+    full_start 是全量抓取起点，其之前的历史本就不入库，扩展不越过它。
+    """
+    d = date.fromisoformat(base_start)
+    pad = (d - timedelta(days=_PAD[freq])).isoformat()
+    return pad if pad > full_start else full_start
+
+
+def _period_start(d, freq):
+    """日期 d 所属日历周期的起点（周一起始周 / 月 1 号）。"""
+    if freq == "weekly":
+        return d - timedelta(days=d.weekday())
+    return d.replace(day=1)
+
+
 def _due_freqs(freqs, today, last_dates):
     """增量模式频率门控：
     daily 仅工作日；weekly 周末且最后周 K 距今 >2 天，或距今 >7 天（补漏）；
@@ -205,13 +229,21 @@ def _kline_rows(kind, freq, df, code, adjustflag):
 
 
 def _fetch_one_kline(conn, kind, code, freq, adjustflag, start, end,
-                     max_retries):
+                     max_retries, full_start):
     """抓单只 (code, freq, adjustflag)：日 K 来自数据源，周/月本地重采样。
-    数据源失败（返回 None）抛 RuntimeError 由主循环记 fail。"""
+    数据源失败（返回 None）抛 RuntimeError 由主循环记 fail。
+
+    start 是入库起点；抓取时向前扩展 _pad_start 拿到窗口首行的
+    preclose/pctChg 上下文，随后只写入 date >= start 的行，避免把
+    重叠区已入库的正确 preclose/pctChg 覆盖成 NULL。
+    周/月在写入前删除本轮覆盖周期的旧行，防止"进行中周期"在不同日期
+    抓取产生不同 date 的残留行堆积（同一周期出现多根 K）。
+    """
+    fetch_start = _pad_start(freq, start, full_start)
     if kind == "etf":
-        df = src.etf_kline(code, start, end, max_retries=max_retries)
+        df = src.etf_kline(code, fetch_start, end, max_retries=max_retries)
     else:
-        df = src.stock_kline(code, start, end,
+        df = src.stock_kline(code, fetch_start, end,
                              adjust=_ADJUST_SINA[adjustflag],
                              max_retries=max_retries)
     if df is None:
@@ -220,6 +252,23 @@ def _fetch_one_kline(conn, kind, code, freq, adjustflag, start, end,
         return 0
     if freq in ("weekly", "monthly"):
         df = src.resample_kline(df, freq)
+    df = df[df["date"] >= start].reset_index(drop=True)
+    if df.empty:
+        return 0
+    if freq in ("weekly", "monthly"):
+        # 清理本轮覆盖周期内不在新数据中的陈旧行（"进行中周期"在不同
+        # 日期抓取产生的不同 date 的半成品行）。先插入（upsert 的
+        # COALESCE 会保留已有的正确 pctChg）再删除，避免整段删除后重插
+        # 导致扩展窗口覆盖不到时丢失 pctChg。
+        table = kline_table(kind, freq)
+        period_start = _period_start(date.fromisoformat(start),
+                                     freq).isoformat()
+        new_dates = [str(d) for d in df["date"]]
+        marks = ",".join("?" for _ in new_dates)
+        conn.execute(
+            f"DELETE FROM {table} WHERE code=? AND adjustflag=? AND date>=?"
+            f" AND date NOT IN ({marks})",
+            [code, adjustflag, period_start] + new_dates)
     insert_kline(conn, kind, freq, adjustflag,
                  _kline_rows(kind, freq, df, code, adjustflag))
     return len(df)
@@ -265,6 +314,10 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
     - 断点续传：非 force 跳过 last_fetch_date==today 的证券；
     - 增量：按 _due_freqs 门控，起始日取该频率最后一根日期往前回退
       _INC_PAD_DAYS（保证周/月重采样周期完整）；退市（status='0'）跳过；
+    - 前复权（adj='2'）即使增量也从 --start 全量重刷：qfq 序列除权后
+      整段平移，末几天增量会混用复权基准；不复权增量安全；
+    - 抓取起点向前扩展窗口（见 _fetch_one_kline）以补全首行
+      preclose/pctChg，周/月写入前清理本轮覆盖周期的旧行；
     - 标记：全量需三档全集成功；增量只需本轮应更频率全部成功；
     - 每只抓完即提交；单只失败记 warning 不中断。
     """
@@ -310,8 +363,12 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
                 fstart = _inc_fstart(freq, last_dates.get(freq), start) \
                     if incremental else start
                 for adj in adjusts:
-                    _fetch_one_kline(conn, kind, code, freq, adj, fstart, end,
-                                     max_retries)
+                    # 前复权序列在除权除息后整段平移，增量重拉只取末几天
+                    # 会混用新旧复权基准（拼接处假跳空），必须全量重刷；
+                    # 不复权序列增量安全。
+                    adj_start = start if adj == "2" else fstart
+                    _fetch_one_kline(conn, kind, code, freq, adj, adj_start,
+                                     end, max_retries, start)
             try:
                 _update_52w_from_kline(conn, kind, table, code, today)
             except Exception as e:  # 52w 回写失败不影响 K 线成功判定
@@ -494,7 +551,7 @@ def run_fetch(conn, codes, freqs, adjusts, start, end, max_retries=3):
         for freq in freqs:
             for adj in code_adjusts:
                 _fetch_one_kline(conn, kind, code, freq, adj, start, end,
-                                 max_retries)
+                                 max_retries, start)
         _update_52w_from_kline(conn, kind, f"{kind}_info", code,
                                date.today().isoformat())
         conn.commit()

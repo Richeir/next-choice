@@ -10,7 +10,7 @@
 - **存储**：SQLite 单库（默认 `data/market.db`），schema 在 `backend/database/schema.sql` 单一来源，被 Python 脚本与 Nest.js 后端共用。
 - **后端**：Nest.js 10 + better-sqlite3，提供 REST API（列表/详情/K 线/统计/分析任务/配置）。
 - **前端**：React 18 + Vite 5 + React Router 6 + ECharts，展示首页统计、列表、详情与 K 线。
-- **分析**：支持“纯技术面评分”（开箱即用）和“LLM 分析”（配置 `ANALYSIS_LLM_API_KEY` 后启用）。
+- **分析**：支持“纯技术面评分”（开箱即用）和“LLM 分析”（配置 `LLM_API_KEY` 后启用）。
 
 ## 仓库结构
 
@@ -126,7 +126,7 @@ npm run dev            # http://localhost:5173
 ## 分析（LLM）模式
 
 - **默认（无 LLM key）**：仅做技术面评分（规则见 [`doc/db-design.md`](doc/db-design.md) §6），前端可直接看到买入/持有天数的输出。
-- **启用 LLM**：配置环境变量 `ANALYSIS_LLM_API_KEY`（及模型/端点），提示词模板可由 `GET/PUT /api/config/analysis` 在线覆盖并落库（DB 优先于文件）。
+- **启用 LLM**：配置环境变量 `LLM_API_KEY`（及 `LLM_MODEL` / `LLM_BASE_URL`），提示词模板可由 `GET/PUT /api/config/analysis` 在线覆盖并落库（DB 优先于文件）。
 - 调用超时与失败会写入 `llm_analysis` 失败标记，前端提示“分析失败可重试”。
 
 ## 数据库

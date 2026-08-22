@@ -50,23 +50,23 @@ describe('SecuritiesService 详情行情', () => {
     // 快照停留在 2026-08-18，但 K 线已更新到 2026-08-19
     db.prepare(
       `INSERT INTO stock_info (${STOCK_INFO_COLS})
-       VALUES ('sh.600000','浦发银行','SH','1','1999-11-10','','1','银行',
+       VALUES ('600000','浦发银行','SH','1','1999-11-10','','1','银行',
                '2026-08-18', 8.97, -0.7743, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
     ).run();
     db.prepare(
       `INSERT INTO stock_kline_daily
        (date, code, open, high, low, close, preclose, volume, amount,
         adjustflag, turn, tradestatus, pctChg, isST)
-       VALUES ('2026-08-18','sh.600000',9.0,9.1,8.9,8.97,9.04,1000,1000,'3',0.5,'1',-0.7743,'0')`,
+       VALUES ('2026-08-18','600000',9.0,9.1,8.9,8.97,9.04,1000,1000,'3',0.5,'1',-0.7743,'0')`,
     ).run();
     db.prepare(
       `INSERT INTO stock_kline_daily
        (date, code, open, high, low, close, preclose, volume, amount,
         adjustflag, turn, tradestatus, pctChg, isST)
-       VALUES ('2026-08-19','sh.600000',9.0,9.2,8.95,9.08,8.97,1200,1200,'3',0.6,'1',1.226,'0')`,
+       VALUES ('2026-08-19','600000',9.0,9.2,8.95,9.08,8.97,1200,1200,'3',0.6,'1',1.226,'0')`,
     ).run();
 
-    const detail = (await service.getStockDetail('sh.600000')) as Record<string, unknown>;
+    const detail = (await service.getStockDetail('600000')) as Record<string, unknown>;
     expect(detail.lastTradeDate).toBe('2026-08-19');
     expect(detail.lastClose).toBe(9.08);
     expect(detail.lastPctChg).toBe(1.226);
@@ -75,11 +75,11 @@ describe('SecuritiesService 详情行情', () => {
   it('无 K 线数据时回退到快照值', async () => {
     db.prepare(
       `INSERT INTO stock_info (${STOCK_INFO_COLS})
-       VALUES ('sh.600000','浦发银行','SH','1','1999-11-10','','1','银行',
+       VALUES ('600000','浦发银行','SH','1','1999-11-10','','1','银行',
                '2026-08-18', 8.97, -0.7743, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
     ).run();
 
-    const detail = (await service.getStockDetail('sh.600000')) as Record<string, unknown>;
+    const detail = (await service.getStockDetail('600000')) as Record<string, unknown>;
     expect(detail.lastTradeDate).toBe('2026-08-18');
     expect(detail.lastClose).toBe(8.97);
   });

@@ -13,7 +13,7 @@ const baseConfig = {
 
 const context: LlmContext = {
   securityType: '股票',
-  basicInfo: '{"code":"sh.600000"}',
+  basicInfo: '{"code":"600000"}',
   klineSummary: '2024-01-01:c=10',
   technicalIndicators: '{"ma5":10}',
 };
@@ -110,7 +110,7 @@ describe('LlmService', () => {
     expect(body.response_format).toEqual({ type: 'json_object' });
     const userMsg = body.messages.find((m: { role: string }) => m.role === 'user').content;
     expect(userMsg).toContain('股票');
-    expect(userMsg).toContain('{"code":"sh.600000"}');
+    expect(userMsg).toContain('{"code":"600000"}');
     restore();
   });
 

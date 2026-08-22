@@ -71,3 +71,42 @@ class TestFetchStockKline:
         n_ok, n_fail = fetch_data.fetch_stock_kline(
             conn, ["daily"], ["3"], "2024-01-01", "2024-01-31", sleep_s=0)
         assert (n_ok, n_fail) == (0, 1)
+
+
+class TestUpdate52wOnKline:
+    """K 线抓取成功后用不复权日 K 重算 52 周高低并回写 stock_info。"""
+
+    def test_covered_updates_52w(self, conn, monkeypatch):
+        # 存量不复权日 K：窗口内一根；窗口外一根（仅用于覆盖判定，
+        # 其 99/0.5 不应进入 52 周计算）
+        conn.execute("INSERT INTO stock_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES ('2023-02-01','600000',20,5,'3')")
+        conn.execute("INSERT INTO stock_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES ('2023-01-15','600000',99,0.5,'3')")
+        conn.commit()
+        monkeypatch.setattr(fetch_data.src, "stock_kline", lambda *a, **kw:
+                            _df([("2024-01-30", 14, 15, 8, 9, 14.5, 100,
+                                  1e3, 1.0, 7.0)]))
+        fetch_data.fetch_stock_kline(conn, ["daily"], ["3"],
+                                     "2023-01-01", "2024-01-31",
+                                     today="2024-01-31", sleep_s=0)
+        row = conn.execute("SELECT high_52w, low_52w FROM stock_info"
+                           " WHERE code='600000'").fetchone()
+        assert row["high_52w"] == 20
+        assert row["low_52w"] == 5
+
+    def test_not_covered_keeps_old_52w(self, conn, monkeypatch):
+        # 日 K 覆盖不足 52 周窗口：保留雪球原值不覆盖
+        conn.execute("UPDATE stock_info SET high_52w=999, low_52w=111")
+        conn.commit()
+        monkeypatch.setattr(fetch_data.src, "stock_kline",
+                            lambda *a, **kw: _two_days())
+        fetch_data.fetch_stock_kline(conn, ["daily"], ["3"],
+                                     "2024-01-01", "2024-01-31",
+                                     today="2024-01-31", sleep_s=0)
+        row = conn.execute("SELECT high_52w, low_52w FROM stock_info"
+                           " WHERE code='600000'").fetchone()
+        assert row["high_52w"] == 999
+        assert row["low_52w"] == 111

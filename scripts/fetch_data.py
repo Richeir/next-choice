@@ -225,6 +225,39 @@ def _fetch_one_kline(conn, kind, code, freq, adjustflag, start, end,
     return len(df)
 
 
+# 52 周高低重算：窗口长度与覆盖容差（容纳周末/长假缺口）
+_52W_WINDOW_DAYS = 365
+_52W_COVER_TOL_DAYS = 15
+
+
+def _update_52w_from_kline(conn, kind, info_table, code, today):
+    """用不复权日 K 重算最近 52 周最高/最低并回写 info 表。
+
+    仅当 K 线覆盖达到窗口（允许 _52W_COVER_TOL_DAYS 天缺口）时回写，
+    否则保留原值（如雪球补齐值），避免部分窗口算出错误值。
+    """
+    from transform import kline_table
+    table = kline_table(kind, "daily")
+    today_dt = date.fromisoformat(today)
+    win_start = (today_dt - timedelta(days=_52W_WINDOW_DAYS)).isoformat()
+    cover_limit = (today_dt
+                   - timedelta(days=_52W_WINDOW_DAYS - _52W_COVER_TOL_DAYS)
+                   ).isoformat()
+    row = conn.execute(
+        f"SELECT max(high) hi, min(low) lo FROM {table}"
+        " WHERE code=? AND adjustflag='3' AND date>=?",
+        (code, win_start)).fetchone()
+    if row["hi"] is None or row["lo"] is None:
+        return
+    min_date = conn.execute(
+        f"SELECT min(date) FROM {table}"
+        " WHERE code=? AND adjustflag='3'", (code,)).fetchone()[0]
+    if min_date is None or min_date > cover_limit:
+        return
+    conn.execute(f"UPDATE {info_table} SET high_52w=?, low_52w=?"
+                 " WHERE code=?", (row["hi"], row["lo"], code))
+
+
 def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
                       today, sleep_s, max_retries, incremental=False):
     """K 线抓取主循环（股票/ETF 共用）。
@@ -279,6 +312,7 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
                 for adj in adjusts:
                     _fetch_one_kline(conn, kind, code, freq, adj, fstart, end,
                                      max_retries)
+            _update_52w_from_kline(conn, kind, table, code, today)
             n_ok += 1
         except Exception as e:  # 网络/解析/入库失败均记 fail 继续
             log.warning("kline %s failed: %s", code, e)
@@ -458,6 +492,8 @@ def run_fetch(conn, codes, freqs, adjusts, start, end, max_retries=3):
             for adj in code_adjusts:
                 _fetch_one_kline(conn, kind, code, freq, adj, start, end,
                                  max_retries)
+        _update_52w_from_kline(conn, kind, f"{kind}_info", code,
+                               date.today().isoformat())
         print(f"[codes] {code} done ({kind})", flush=True)
 
 

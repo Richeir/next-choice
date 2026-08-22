@@ -43,6 +43,35 @@ class TestRunFetch:
         assert conn.execute("SELECT count(*) c FROM etf_kline_daily"
                             ).fetchone()["c"] == 1
 
+    def test_codes_updates_52w(self, conn, monkeypatch):
+        """--codes 路径抓完 K 线后同样重算 52 周高低。"""
+        from datetime import date, timedelta
+        today = date.today()
+        in_win = (today - timedelta(days=100)).isoformat()
+        cover = (today - timedelta(days=400)).isoformat()
+        new_day = (today - timedelta(days=1)).isoformat()
+        conn.execute("INSERT INTO stock_info"
+                     " (code, code_name, market, type, status)"
+                     " VALUES ('600000','浦发银行','SH','1','1')")
+        conn.execute("INSERT INTO stock_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES (?, '600000', 20, 5, '3')", (in_win,))
+        conn.execute("INSERT INTO stock_kline_daily"
+                     " (date, code, high, low, adjustflag)"
+                     " VALUES (?, '600000', 99, 0.5, '3')", (cover,))
+        conn.commit()
+        monkeypatch.setattr(fetch_data.src, "stock_kline",
+                            lambda *a, **kw: pd.DataFrame(
+                                [(new_day, 14, 15, 8, 9, 14.5,
+                                  100, 1e3, 1.0, 6.0)],
+                                columns=fetch_data.src.KLINE_COLS))
+        fetch_data.run_fetch(conn, ["600000"], ["daily"], ["3"],
+                             cover, today.isoformat())
+        row = conn.execute("SELECT high_52w, low_52w FROM stock_info"
+                           " WHERE code='600000'").fetchone()
+        assert row["high_52w"] == 20
+        assert row["low_52w"] == 5
+
 
 class TestParser:
     def test_mutually_exclusive(self):

@@ -11,6 +11,9 @@
     # 雪球逐只补齐个股字段（全称/行业/IPO/PB/52周高低），只处理未抓过的
     python fetch_data.py --fetch-stock-info [--limit 10]
 
+    # 雪球逐只补齐 ETF 字段（52周高低），只处理未抓过的
+    python fetch_data.py --fetch-etf-info [--limit 10]
+
     # 按 info 表全量抓 K 线（周/月由日 K 本地重采样）
     python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
         --adjust 2,3 --start 2026-01-05
@@ -40,18 +43,30 @@ from transform import is_etf_code, market_of
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _upsert_sql(table, cols):
+    """生成 INSERT ... ON CONFLICT(code) DO UPDATE SET 语句。
+
+    相比 INSERT OR REPLACE（删旧行再插新行，未列出的列会归 NULL），
+    upsert 保留不在 cols 中的列（如雪球补齐的 full_name / high_52w 等）。"""
+    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "code")
+    return (f"INSERT INTO {table} ({', '.join(cols)}) "
+            f"VALUES ({', '.join('?' * len(cols))}) "
+            f"ON CONFLICT(code) DO UPDATE SET {updates}")
+
+
 def update_stock_list(conn, max_retries=3):
     """腾讯全市场刷新 stock_info：列表 + 行情字段（金额单位元）。
 
     type 恒 '1'、status 恒 '1'（腾讯列表只含在交易证券；退市股旧行保留）。
     未知号段（如北交所 92 开头）跳过并计入返回值的第二位（skip）。
+    用 upsert 写库，保留雪球补齐的 full_name / industry / 52 周高低等列。
     """
     rows = src.list_stocks(max_retries=max_retries)
     log.info("stock_zh_a_spot_tx -> %d stocks", len(rows))
-    cols = ("code, code_name, market, type, status, last_trade_date,"
-            " last_close, last_pct_chg, last_amount, pe_ttm, total_market_cap")
-    sql = (f"INSERT OR REPLACE INTO stock_info ({cols}) "
-           "VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    cols = ["code", "code_name", "market", "type", "status",
+            "last_trade_date", "last_close", "last_pct_chg", "last_amount",
+            "pe_ttm", "total_market_cap"]
+    sql = _upsert_sql("stock_info", cols)
     today = date.today().isoformat()
     n_ok = n_skip = 0
     total = len(rows)
@@ -63,10 +78,10 @@ def update_stock_list(conn, max_retries=3):
             log.warning("skip %s: unknown code segment", r["code"])
             n_skip += 1
             continue
-        conn.execute(sql, (r["code"], r["name"], market, "1",
+        conn.execute(sql, [r["code"], r["name"], market, "1",
                            "1", today, r["last_close"], r["last_pct_chg"],
                            r["last_amount"], r["pe_ttm"],
-                           r["total_market_cap"]))
+                           r["total_market_cap"]])
         n_ok += 1
         if idx % 500 == 0 or idx == total:
             conn.commit()
@@ -76,15 +91,18 @@ def update_stock_list(conn, max_retries=3):
 
 
 def update_etf_list(conn, max_retries=3):
-    """新浪列表 + 同花顺类别 + 新浪基金规模/管理人，刷新 etf_info。"""
+    """新浪列表 + 同花顺类别 + 新浪基金规模/管理人，刷新 etf_info。
+
+    用 upsert 写库，保留雪球补齐的 high_52w / low_52w 与 K 线断点标记。
+    """
     etfs = src.list_etfs(max_retries=max_retries)
     cats = src.etf_category_map(max_retries=max_retries)
     scales = src.fund_scale_map(max_retries=max_retries)
     log.info("etf list=%d category=%d scale=%d",
              len(etfs), len(cats), len(scales))
-    cols = ("code, code_name, market, type, status, ipoDate,"
-            " category, manager, fund_scale")
-    sql = f"INSERT OR REPLACE INTO etf_info ({cols}) VALUES (?,?,?,?,?,?,?,?,?)"
+    cols = ["code", "code_name", "market", "type", "status", "ipoDate",
+            "category", "manager", "fund_scale"]
+    sql = _upsert_sql("etf_info", cols)
     n_ok = n_fail = 0
     total = len(etfs)
     for idx, e in enumerate(etfs, 1):
@@ -98,10 +116,10 @@ def update_etf_list(conn, max_retries=3):
                 n_fail += 1
                 continue
         try:
-            conn.execute(sql, (e["code"], e["name"], market,
+            conn.execute(sql, [e["code"], e["name"], market,
                                "5", "1", s.get("ipo_date"),
                                cats.get(e["code"]), s.get("manager"),
-                               s.get("fund_scale")))
+                               s.get("fund_scale")])
             n_ok += 1
         except Exception as ex:  # 防御：单只失败不中断
             log.warning("etf_info insert %s failed: %s", e["code"], ex)
@@ -349,6 +367,56 @@ def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
     return n_ok, n_fail
 
 
+def fetch_etf_info(conn, limit=None, sleep_s=0.5, max_retries=3):
+    """雪球逐只补齐 ETF 字段（high_52w/low_52w），仅处理 high_52w 为空的
+    在市 ETF；quote 失败记 fail，单只意外异常记 fail 继续。"""
+    import time as _time
+    rows = conn.execute(
+        "SELECT code FROM etf_info"
+        " WHERE status='1' AND high_52w IS NULL"
+        " ORDER BY code").fetchall()
+    codes = [r["code"] for r in rows]
+    if limit is not None:
+        codes = codes[:limit]
+    n_ok = n_fail = 0
+    total = len(codes)
+    for idx, code in enumerate(codes, 1):
+        try:
+            quote = src.stock_quote(code, max_retries=max_retries)
+        except Exception as e:  # 防御：单只意外异常不中断整体
+            log.warning("etf_info %s unexpected error: %s", code, e)
+            n_fail += 1
+            continue
+        if quote is None:
+            log.warning("etf_info %s: xq quote failed", code)
+            n_fail += 1
+            continue
+        mapping = {"high_52w": quote.get("high_52w"),
+                   "low_52w": quote.get("low_52w")}
+        sets, vals = [], []
+        for col, v in mapping.items():
+            if v is not None:
+                sets.append(f"{col}=?")
+                vals.append(v)
+        if sets:
+            vals.append(code)
+            conn.execute(f"UPDATE etf_info SET {', '.join(sets)}"
+                         " WHERE code=?", vals)
+            conn.commit()
+        else:
+            # quote 成功但无 52 周字段：记 ok 不写库，下次运行会重试该只，
+            # 显式日志便于观察哪些证券长期处于待补齐状态。
+            log.warning("etf_info %s: quote ok but no 52w fields,"
+                        " will retry next run", code)
+        n_ok += 1
+        if idx % 50 == 0 or idx == total:
+            print(f"[etf-info] {idx}/{total} ok={n_ok} fail={n_fail}",
+                  flush=True)
+        if idx < total and sleep_s > 0:
+            _time.sleep(sleep_s)
+    return n_ok, n_fail
+
+
 def _ensure_info_row(conn, code, max_retries):
     """--codes 路径：若 info 表无该 code，按号段判断股票/ETF 写入最小行。"""
     exists = conn.execute("SELECT 1 FROM stock_info WHERE code=?",
@@ -410,6 +478,8 @@ def build_parser():
                        help="刷新 ETF 列表/类别/规模/管理人")
     group.add_argument("--fetch-stock-info", action="store_true",
                        help="雪球逐只补齐个股字段（仅未抓过的）")
+    group.add_argument("--fetch-etf-info", action="store_true",
+                       help="雪球逐只补齐 ETF 52周高低（仅未抓过的）")
     group.add_argument("--fetch-stock-kline", action="store_true",
                        help="按 stock_info 全量抓 A 股 K 线")
     group.add_argument("--fetch-etf-kline", action="store_true",
@@ -424,7 +494,8 @@ def build_parser():
     parser.add_argument("--start", default=None, help="起始日期 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束日期 YYYY-MM-DD")
     parser.add_argument("--limit", type=int, default=None,
-                        help="--fetch-stock-info 限制处理数量")
+                        help="--fetch-stock-info / --fetch-etf-info"
+                             " 限制处理数量")
     parser.add_argument("--sleep", type=float, default=0.5,
                         help="逐只抓取的间隔秒数（默认 0.5）")
     parser.add_argument("--max-retries", type=int, default=3,
@@ -461,6 +532,11 @@ def main(argv=None):
                                             sleep_s=args.sleep,
                                             max_retries=args.max_retries)
             print(f"done. db={args.db} stock_info ok={n_ok} fail={n_fail}")
+        elif args.fetch_etf_info:
+            n_ok, n_fail = fetch_etf_info(conn, limit=args.limit,
+                                          sleep_s=args.sleep,
+                                          max_retries=args.max_retries)
+            print(f"done. db={args.db} etf_info ok={n_ok} fail={n_fail}")
         elif args.fetch_stock_kline or args.fetch_etf_kline:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]

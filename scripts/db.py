@@ -58,15 +58,20 @@ def init_db(db_path, schema_path=None):
 
 # 对旧库做增量迁移：schema.sql 用 CREATE TABLE IF NOT EXISTS，不会给已存在的
 # 表补列，故对缺失的列单独 ALTER TABLE ADD COLUMN。
-_INFO_LAST_FETCH = {"stock_info": "last_fetch_date", "etf_info": "last_fetch_date"}
+_INFO_MIGRATIONS = [
+    ("stock_info", "last_fetch_date", "TEXT"),
+    ("etf_info", "last_fetch_date", "TEXT"),
+    ("etf_info", "high_52w", "REAL"),
+    ("etf_info", "low_52w", "REAL"),
+]
 
 
 def _migrate(conn):
     """为已存在的 info 表补充新增列（幂等）。"""
-    for table, col in _INFO_LAST_FETCH.items():
+    for table, col, coltype in _INFO_MIGRATIONS:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
         if col not in cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
     conn.commit()
 
 

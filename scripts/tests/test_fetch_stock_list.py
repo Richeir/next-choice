@@ -46,6 +46,27 @@ class TestUpdateStockList:
             "SELECT market FROM stock_info WHERE code='000001'").fetchone()
         assert row["market"] == "SZ"
 
+    def test_upsert_preserves_xq_backfilled_fields(self, conn, monkeypatch):
+        """列表刷新不得擦除雪球逐只补齐的字段（full_name/industry/PB/52周等）。"""
+        conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                     " status, full_name, industry, ipoDate, pb, high_52w,"
+                     " low_52w) VALUES ('600000','旧名','SH','1','1',"
+                     " '上海浦东发展银行股份有限公司','银行','1999-11-10',"
+                     " 0.5, 13.6, 8.1)")
+        conn.commit()
+        monkeypatch.setattr(fetch_data.src, "list_stocks",
+                            lambda **kw: _stocks())
+        fetch_data.update_stock_list(conn)
+        row = conn.execute(
+            "SELECT * FROM stock_info WHERE code='600000'").fetchone()
+        # 列表字段被刷新
+        assert row["code_name"] == "浦发银行" and row["last_close"] == 9.05
+        # 雪球补齐字段保留（注意 total_market_cap 由列表源刷新，不保留）
+        assert row["full_name"] == "上海浦东发展银行股份有限公司"
+        assert row["industry"] == "银行" and row["ipoDate"] == "1999-11-10"
+        assert row["pb"] == 0.5
+        assert row["high_52w"] == 13.6 and row["low_52w"] == 8.1
+
     def test_unknown_segment_skipped(self, conn, monkeypatch):
         rows = _stocks() + [{"code": "920045", "name": "北交所样本",
                              "pe_ttm": None, "total_market_cap": None,

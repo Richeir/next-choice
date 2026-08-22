@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_close      REAL,               -- 最后一个交易日收盘价（不复权原始价，即 NAV）
     last_pct_chg    REAL,               -- 最后一个交易日涨跌幅（%）
     fund_scale      REAL,               -- 基金募集规模（元），由 Akshare 填充
+    high_52w        REAL,               -- 52 周最高价，由 `--fetch-etf-info` 雪球逐只补齐
+    low_52w         REAL,               -- 52 周最低价，由 `--fetch-etf-info` 雪球逐只补齐
     last_fetch_date TEXT                -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
 );
 ```
@@ -127,6 +129,7 @@ CREATE TABLE IF NOT EXISTS etf_info (
 > - 新浪 `fund_etf_category_sina`：`code`、`code_name`
 > - 同花顺 `fund_etf_category_ths`：`category`
 > - 新浪基金 `fund_scale_open_sina`：`fund_scale`（万→元）、`manager`、`ipoDate`
+> - `high_52w / low_52w` 由 `--fetch-etf-info` 雪球 `stock_individual_spot_xq` 逐只补齐（仅 `high_52w` 为空的）
 > - `last_trade_date / last_close / last_pct_chg` 由 `--update-etf-list` 列表中的实时行情写入（无行情字段时为 `NULL`，可后续由日 K 补齐）。
 
 ## 5. K 线表结构（6 张）

@@ -120,6 +120,9 @@ def test_migrate_adds_last_fetch_date_to_old_table(tmp_path):
     for t in ["stock_info", "etf_info"]:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
         assert "last_fetch_date" in cols
+    # etf_info 还应补齐雪球 52 周高低列
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(etf_info)")]
+    assert "high_52w" in cols and "low_52w" in cols
     conn.close()
 
 

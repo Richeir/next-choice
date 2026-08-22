@@ -7,14 +7,14 @@
 - **Base URL**：`/api`，如 `GET /api/stats`
 - **数据格式**：请求/响应均为 JSON
 - **时间格式**：`YYYY-MM-DD`
-- **证券代码**：带交易所前缀原文，如 `sh.600000`、`sh.510010`
+- **证券代码**：6 位纯数字，如 `600000`、`510050`
 - **分页**：`page`（从 1 起）+ `pageSize`（默认 20，最大 100），响应带总数
 - **错误**：统一 `{ statusCode, message, error }` 结构，遵循 Nest.js 默认异常格式
 - **MVP0 无鉴权**：本地工具型应用，后续如需登录再引入
 - **字段命名**：API 响应统一使用 **camelCase**（如 `lastTradeDate`、`isWorthBuying`），数据库列名使用 snake_case（如 `last_trade_date`），由后端 Service/Repository 层负责转换
 - **字段来源约定**：
-  - 基础行情字段（收盘价、涨跌幅、PE、ETF 的 `nav` 等）可由脚本从 BaoStock 回填
-  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale`（ETF）等由**独立 LLM 补齐脚本（`scripts/llm_backfill.py`）填充**，未填充前为 `null`
+  - 基础行情字段（收盘价、涨跌幅、PE、ETF 的 `nav` 等）由采集脚本从 Akshare 写入
+  - `industry` / `lastAmount`（成交额）/ `pb` / `totalMarketCap` / `fullName` / `high52w` / `low52w`（股票）及 `category` / `manager` / `fundScale`（ETF）等由采集脚本从 Akshare 直抓（个股字段需 `--fetch-stock-info` 补齐），未抓取前为 `null`
   - `rating`（买入评级）由 `score`（综合评分 0~100）换算得出，不单独入库，详见 [db-design.md](db-design.md) §6
 
 ## 2. 首页统计
@@ -79,7 +79,7 @@
 {
   "items": [
     {
-      "code": "sh.600000",
+      "code": "600000",
       "codeName": "浦发银行",
       "market": "SH",
       "industry": "货币金融服务",
@@ -124,7 +124,7 @@
 {
   "items": [
     {
-      "code": "sh.510010",
+      "code": "510050",
       "codeName": "沪深300ETF",
       "market": "SH",
       "category": "宽基",
@@ -155,13 +155,13 @@
 
 返回股票基础信息 + 最近行情。
 
-**路径参数**：`code`（如 `sh.600000`）
+**路径参数**：`code`（如 `600000`）
 
 **响应**
 
 ```json
 {
-  "code": "sh.600000",
+  "code": "600000",
   "codeName": "浦发银行",
   "fullName": "上海浦东发展银行股份有限公司",
   "market": "SH",
@@ -192,7 +192,7 @@
 
 ```json
 {
-  "code": "sh.510010",
+  "code": "510050",
   "codeName": "沪深300ETF",
   "market": "SH",
   "type": "5",

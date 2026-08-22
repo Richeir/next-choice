@@ -1,6 +1,7 @@
-# BaoStock K 线数据存储设计（SQLite）
+# Akshare K 线数据存储设计（SQLite）
 
-本文件描述将 BaoStock 的股票 / ETF 日、周、月 K 线数据落库为 SQLite 的数据库设计。
+本文件描述将 Akshare 的股票 / ETF 日、周、月 K 线数据落库为 SQLite 的数据库设计。
+周 / 月 K 由日 K **本地重采样**生成（数据源无直抓接口）。
 
 ## 1. 设计目标与原则
 
@@ -8,20 +9,21 @@
 - **频率分表**：日 / 周 / 月 K 各建一张表，避免混合存储造成字段与粒度混乱。
 - **复权策略**：每张 K 线表同时保存 **前复权（`adjustflag='2'`）** 与 **不复权原始价（`'3'`）** 两档。
   - 前复权：符合画图 / 趋势分析需求。
-  - 不复权：原始成交价"永久真实"，当某股发生新的分红送股、前复权历史价漂移时，可结合复权因子表重算最新前复权，不必整段重拉。
+  - 不复权：原始成交价“永久真实”。
+  - **ETF 仅存不复权（`'3'`）**：新浪源不支持 ETF 复权。
 - **幂等写入**：以 `UNIQUE(code, date, adjustflag)` 为主键约束，重复抓取用 `INSERT OR REPLACE` / `INSERT OR IGNORE` 去重。
 - **约定**：
-  - `code` 带交易所前缀原文存储（如 `sh.600000`、`sh.510010`）。
-  - 数值列从 BaoStock 返回的 `str` 转换为 `REAL` 入库。
+  - `code` 存 6 位纯数字（如 `600000`、`510050`），`market` 由代码号段推断。
+  - 金额单位统一为**元**（源数据为“亿”/“万”时脚本内换算）。
   - 日期用 `TEXT` 存储，格式 `YYYY-MM-DD`（字典序即时间序）。
 
 ## 2. 数据范围与频率说明
 
 | 频率 | 股票范围 | ETF 范围 | 字段集 |
 |------|----------|----------|--------|
-| 日 K | 1990-12-19 至今 | 2026-01-05 至今 | 完整字段（含 `preclose/tradestatus/isST`） |
-| 周 K | 1990-12-19 至今 | 2026-01-05 至今 | 精简字段 |
-| 月 K | 1990-12-19 至今 | 2026-01-05 至今 | 精简字段 |
+| 日 K | 新浪源可用历史至今 | 新浪源可用历史至今 | 完整字段（含 `preclose/tradestatus/isST`） |
+| 周 K | 同上（日 K 本地重采样） | 同上 | 精简字段 |
+| 月 K | 同上（日 K 本地重采样） | 同上 | 精简字段 |
 
 ## 3. 表清单
 
@@ -58,78 +60,74 @@ etf_analysis     ETF   技术面分析
 adjust_factor  复权因子
 ```
 
-> 股票 / ETF 基础信息均由 `query_stock_basic` 返回，靠 `type` 字段区分（股票 `'1'`、ETF `'5'`），分两张表存储。
+> 股票 / ETF 基础信息分别由腾讯全市场行情（`stock_zh_a_spot_tx`）与新浪/同花顺/新浪基金列表写入，靠 `type` 字段区分（股票 `'1'`、ETF `'5'`），分两张表存储。
 
 ## 4. 基础信息表（2 张）
 
 ### 4.1 股票基础信息 `stock_info`
 
-记录股票（`type='1'`）的基础信息。基础字段来自 `query_stock_basic`；部分字段由脚本从 K 线回填，其余（行业、成交额、市净率、公司全称、市值、52 周高低）由独立 LLM 补齐脚本
-（`scripts/llm_backfill.py`）填充，与分析打分解耦。与 K 线表通过 `code` 关联：
+记录股票（`type='1'`）的基础信息。列表与行情字段由腾讯全市场行情一次写入；
+全称/行业/上市日期/市净率/52 周高低由雪球接口逐只补齐（`--fetch-stock-info`）。
+与 K 线表通过 `code` 关联：
 
 ```sql
 CREATE TABLE IF NOT EXISTS stock_info (
-    code            TEXT PRIMARY KEY,  -- 如 sh.600000
+    code            TEXT PRIMARY KEY,  -- 如 600000（6 位纯数字）
     code_name       TEXT,              -- 证券名称
-    market          TEXT,              -- 市场：SH 上交所 / SZ 深交所（由代码前缀推断）
+    market          TEXT,              -- 市场：SH 上交所 / SZ 深交所（由代码号段推断）
     type            TEXT,              -- 证券类型，'1' 股票
     ipoDate         TEXT,              -- 上市日期 YYYY-MM-DD
-    outDate         TEXT,              -- 退市日期（在上市为空）
-    status          TEXT,              -- 上市状态，'1' 上市
-    industry        TEXT,              -- 所属行业（由 LLM 填充）
+    outDate         TEXT,              -- 退市日期（在上市为空；新数据源不提供，恒为 NULL）
+    status          TEXT,              -- 上市状态，'1' 上市（新数据源无退市标记，退市股不再出现在列表中）
+    industry        TEXT,              -- 所属行业（由 Akshare 填充）
     last_trade_date TEXT,              -- 最后交易日 YYYY-MM-DD
     last_close      REAL,              -- 最后交易日收盘价（不复权）
     last_pct_chg    REAL,              -- 最后交易日涨跌幅（%）
-    last_amount     REAL,              -- 最后交易日成交额（元），由 LLM 填充
+    last_amount     REAL,              -- 最后交易日成交额（元）
     pe_ttm          REAL,              -- 市盈率 PE(TTM)
-    pb              REAL,              -- 市净率 PB，由 LLM 填充
-    full_name       TEXT,              -- 公司全称，由 LLM 填充
-    total_market_cap REAL,             -- 总市值，由 LLM 填充
-    high_52w        REAL,              -- 52 周最高价，由 LLM 填充
-    low_52w         REAL,              -- 52 周最低价，由 LLM 填充
-    last_fetch_date TEXT,              -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
-    llm_backfill_at TEXT               -- LLM 最近一次回填基础信息时间（ISO 8601）
+    pb              REAL,              -- 市净率 PB（由 Akshare 填充）
+    full_name       TEXT,              -- 公司全称（由 Akshare 填充）
+    total_market_cap REAL,             -- 总市值（元）
+    high_52w        REAL,              -- 52 周最高价（由 Akshare 填充）
+    low_52w         REAL,              -- 52 周最低价（由 Akshare 填充）
+    last_fetch_date TEXT               -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
 );
 ```
 
-> **市场区分**：BaoStock 代码带交易所前缀，`sh.` 为上交所（上海）、`sz.` 为深交所（深圳），`market` 列由前缀推断（`sh`→`SH`、`sz`→`SZ`）。ETF 同样分两个市场（如 `sh.510010` 沪、`sz.159915` 深）。
+> **市场区分**：`code` 为 6 位纯数字，`market` 由号段推断：股票 `60/68` → SH、`00/30` → SZ；ETF `51/56/58` → SH、`15/16` → SZ。
 >
-> **行情字段来源（区分脚本回填 vs LLM 填充）**：
-> - **脚本可回填（来自 `query_history_k_data_plus` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`）、`pe_ttm`（`peTTM`），取每个 `code` 日期最大的那一行。
-> - **由独立 LLM 脚本补齐（BaoStock 无法直接获取）**：`industry`（所属行业）、`last_amount`（成交额）、`pb`、`full_name`（公司全称）、`total_market_cap`（总市值）、`high_52w`（52 周最高）、`low_52w`（52 周最低）。这些字段为**可空**，未填充前为 `NULL`；由 `scripts/llm_backfill.py` 在分析任务之外独立补齐。
->
-> **LLM 回填规则（防幻觉覆盖）**：仅回填空字段（目标列已有值不覆盖）；入库前校验（字符串非空且限长、数值有限且非负、52 周高低须为正）；每次回填写入 `llm_backfill_at` 时间戳便于追溯。
+> **字段来源**：
+> - **腾讯全市场行情（`--update-stock-list`，一次拉全市场）**：`code_name`、`last_trade_date`、`last_close`、`last_pct_chg`、`last_amount`（万→元）、`pe_ttm`、`total_market_cap`（亿→元）。
+> - **雪球逐只补齐（`--fetch-stock-info`，仅抓 `full_name` 为空的在市股票）**：`full_name`、`industry`、`ipoDate`、`pb`、`high_52w`、`low_52w`、`total_market_cap`（与腾讯源交叉，后写为准）。这些字段为**可空**，未抓取前为 `NULL`。
 
 ### 4.2 ETF 基础信息 `etf_info`
 
-记录 ETF（`type='5'`）的基础信息，字段来自 `query_stock_basic`：
+记录 ETF（`type='5'`）的基础信息：
 
 ```sql
 CREATE TABLE IF NOT EXISTS etf_info (
-    code            TEXT PRIMARY KEY,   -- 如 sh.510010
+    code            TEXT PRIMARY KEY,   -- 如 510050（6 位纯数字）
     code_name       TEXT,               -- ETF 名称
-    market          TEXT,               -- 市场：SH 上交所 / SZ 深交所（由代码前缀推断）
+    market          TEXT,               -- 市场：SH 上交所 / SZ 深交所（由代码号段推断）
     type            TEXT,               -- 证券类型，'5' ETF
-    ipoDate         TEXT,               -- 上市日期 YYYY-MM-DD
-    outDate         TEXT,               -- 退市日期（在上市为空）
+    ipoDate         TEXT,               -- 成立日期 YYYY-MM-DD
+    outDate         TEXT,               -- 退市日期（新数据源不提供，恒为 NULL）
     status          TEXT,               -- 上市状态，'1' 上市
-    category        TEXT,               -- ETF 类别：宽基/行业/主题/策略/跨境/债券，由 LLM 填充
-    manager         TEXT,               -- 管理人，由 LLM 填充
-    last_trade_date TEXT,               -- 价格对应交易日 YYYY-MM-DD（最后一个有 K 线的交易日），脚本回填
-    last_close      REAL,               -- 最后一个交易日收盘价（不复权原始价，即 NAV），脚本回填
-    last_pct_chg    REAL,               -- 最后一个交易日涨跌幅（%），脚本回填
-    fund_scale      REAL,               -- 基金规模（如净值规模/份额规模，口径以填补时约定为准），由 LLM 循环填补
-    last_fetch_date TEXT,               -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
-    llm_backfill_at TEXT                -- LLM 最近一次回填基础信息时间（ISO 8601）
+    category        TEXT,               -- ETF 类别（股票型/债券型等，同花顺分类），由 Akshare 填充
+    manager         TEXT,               -- 基金经理，由 Akshare 填充
+    last_trade_date TEXT,               -- 价格对应交易日 YYYY-MM-DD（列表刷新时写入）
+    last_close      REAL,               -- 最后一个交易日收盘价（不复权原始价，即 NAV）
+    last_pct_chg    REAL,               -- 最后一个交易日涨跌幅（%）
+    fund_scale      REAL,               -- 基金募集规模（元），由 Akshare 填充
+    last_fetch_date TEXT                -- 全量抓取完成日 YYYY-MM-DD（脚本标记，断点续传用）
 );
 ```
 
-> 说明：BaoStock 没有独立的 ETF 基础信息接口，ETF 也通过 `query_stock_basic` 返回，仅 `type` 取值不同（ETF 为 `'5'`）。
->
-> **行情字段来源（区分脚本回填 vs LLM 填充）**：
-> - **脚本可回填（来自 `etf_kline_daily` 日 K，`adjustflag='3'` 不复权）**：`last_trade_date`（`date`）、`last_close`（`close`）、`last_pct_chg`（`pctChg`），取每个 `code` 日期最大的那一行。`last_close` 同时作为 ETF 的 **NAV**（净值）。与股票一致，无需 LLM。
-> - **由独立 LLM 脚本补齐（BaoStock 无法直接获取）**：`category`（类别：宽基/行业/主题/策略/跨境/债券）、`manager`（管理人）、`fund_scale`（基金规模，入库时建议统一口径如元 / 亿元 / 份额数）；由 `scripts/llm_backfill.py` 独立补齐。
-> - 这些字段为**可空**，未填充前为 `NULL`；回填规则与股票一致（仅空字段 + 校验 + `llm_backfill_at`）。
+> **字段来源（`--update-etf-list`，三个源批量 join）**：
+> - 新浪 `fund_etf_category_sina`：`code`、`code_name`
+> - 同花顺 `fund_etf_category_ths`：`category`
+> - 新浪基金 `fund_scale_open_sina`：`fund_scale`（万→元）、`manager`、`ipoDate`
+> - `last_trade_date / last_close / last_pct_chg` 由 `--update-etf-list` 列表中的实时行情写入（无行情字段时为 `NULL`，可后续由日 K 补齐）。
 
 ## 5. K 线表结构（6 张）
 
@@ -138,7 +136,7 @@ CREATE TABLE IF NOT EXISTS etf_info (
 | 列名 | 类型 | 说明 |
 |------|------|------|
 | `date` | `TEXT` | 交易日 `YYYY-MM-DD` |
-| `code` | `TEXT` | 带交易所前缀代码，如 `sh.600000` |
+| `code` | `TEXT` | 6 位纯数字代码，如 `600000` |
 | `open` | `REAL` | 开盘价 |
 | `high` | `REAL` | 最高价 |
 | `low` | `REAL` | 最低价 |
@@ -176,7 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_daily_codedate ON stock_kline_daily(code, d
 
 ### 5.2 股票周 K `stock_kline_weekly`
 
-BaoStock 周 K **不返回** `preclose`、`tradestatus`、`isST`，故省略这三列：
+周 / 月 K 由日 K 本地重采样生成（数据源无直抓接口），省略 `preclose`、`tradestatus`、`isST` 三列：
 
 ```sql
 CREATE TABLE IF NOT EXISTS stock_kline_weekly (
@@ -220,7 +218,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_monthly_codedate ON stock_kline_monthly(cod
 
 ### 5.4 ETF 日 K `etf_kline_daily`
 
-ETF 日 K 除标准字段外，BaoStock 还返回 **估值指标** `peTTM`、`pbMRQ`、`psTTM`、`pcfNcfTTM`（对多数 ETF 为空字符串）：
+ETF 日 K 除标准字段外保留 **估值指标** 列 `peTTM`、`pbMRQ`、`psTTM`、`pcfNcfTTM`（新数据源不提供，恒为 `NULL`，保留列以兼容后端）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS etf_kline_daily (
@@ -298,7 +296,7 @@ CREATE INDEX IF NOT EXISTS idx_etf_monthly_codedate ON etf_kline_monthly(code, d
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
-| `code` | `TEXT` | 证券代码，如 `sh.600000` |
+| `code` | `TEXT` | 证券代码，如 `600000` |
 | `date` | `TEXT` | 最后交易日 `YYYY-MM-DD`（取数据最后一行日 K，不用服务器日期，避免 UTC 跨日） |
 | `score` | `REAL` | 综合评分 0~100 |
 | `signal` | `TEXT` | 结论：`BUY` / `HOLD` / `SELL` |
@@ -426,7 +424,7 @@ CREATE TABLE IF NOT EXISTS adjust_factor (
 );
 ```
 
-> 因子实际含义请以 BaoStock 返回为准（不同 `query_adjust_factor` 调用口径可能返回前复权/后复权因子之一）。重算前复权价的基本思路：`前复权价 ≈ 原始价 × 前复权因子`，具体公式按 BaoStock 文档核对。
+> 复权因子表为历史遗留（原 BaoStock `query_adjust_factor`），迁移后不再写入；新数据源的前复权价直接由新浪 `stock_zh_a_daily(adjust="qfq")` 提供。
 
 ### 7.2 分析任务 `analysis_jobs`
 
@@ -436,7 +434,7 @@ CREATE TABLE IF NOT EXISTS adjust_factor (
 CREATE TABLE IF NOT EXISTS analysis_jobs (
     id         TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,           -- 'stock' | 'etf'
-    code       TEXT NOT NULL,           -- 标的代码，如 sh.600000
+    code       TEXT NOT NULL,           -- 标的代码，如 600000
     status     TEXT NOT NULL,           -- pending | running | done | failed
     result     TEXT,                    -- 任务结果（JSON 序列化，done 时）
     error      TEXT,                    -- 失败原因
@@ -454,7 +452,7 @@ CREATE INDEX IF NOT EXISTS idx_analysis_jobs_code ON analysis_jobs(kind, code, s
 -- 某只股票的前复权日 K（最近 N 天）
 SELECT date, open, high, low, close, volume, amount, pctChg
 FROM stock_kline_daily
-WHERE code = 'sh.600000' AND adjustflag = '2'
+WHERE code = '600000' AND adjustflag = '2'
 ORDER BY date DESC
 LIMIT 100;
 
@@ -463,10 +461,10 @@ SELECT code, close
 FROM stock_kline_daily
 WHERE date = '2024-01-05' AND adjustflag = '3';
 
--- 某只 ETF 前复权月 K 全量
+-- 某只 ETF 不复权月 K 全量（ETF 仅存不复权）
 SELECT date, open, high, low, close, volume, amount
 FROM etf_kline_monthly
-WHERE code = 'sh.510010' AND adjustflag = '2'
+WHERE code = '510010' AND adjustflag = '3'
 ORDER BY date;
 
 -- 幂等写入一条日 K（重复则覆盖）
@@ -474,42 +472,12 @@ INSERT OR REPLACE INTO stock_kline_daily
   (date, code, open, high, low, close, preclose, volume, amount,
    adjustflag, turn, tradestatus, pctChg, isST)
 VALUES
-  ('2024-01-05', 'sh.600000', 6.65, 6.67, 6.55, 6.62, 6.64, 28885978, 0,
+  ('2024-01-05', '600000', 6.65, 6.67, 6.55, 6.62, 6.64, 28885978, 0,
    '2', 0.0752, '1', -0.3021, '0');
 
--- 用不复权日 K 自动回填 etf_info 的脚本可回填字段（按 code 取最大日期一行）
--- 注意：category / manager / fund_scale 由 LLM 填充，不从 K 线回填
-UPDATE etf_info
-SET last_trade_date = k.date,
-    last_close      = k.close,
-    last_pct_chg    = k.pctChg
-FROM (
-    SELECT code, date, close, pctChg,
-           ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
-    FROM etf_kline_daily
-    WHERE adjustflag = '3'
-) AS k
-WHERE etf_info.code = k.code AND k.rn = 1;
-
--- 用不复权日 K 自动回填 stock_info 的脚本可回填字段（按 code 取最大日期一行）
--- 注意：last_amount / industry / pb / full_name / total_market_cap / high_52w / low_52w 由 LLM 填充，不从 K 线回填
-UPDATE stock_info
-SET last_trade_date = k.date,
-    last_close      = k.close,
-    last_pct_chg    = k.pctChg,
-    pe_ttm          = k.peTTM
-FROM (
-    SELECT code, date, close, pctChg, peTTM,
-           ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
-    FROM stock_kline_daily
-    WHERE adjustflag = '3'
-) AS k
-WHERE stock_info.code = k.code AND k.rn = 1;
-
--- 查询规模/类别/管理人仍为 NULL 的 ETF（供 LLM 循环继续补齐）
-SELECT code, code_name, category, manager, fund_scale
-FROM etf_info
-WHERE last_close IS NOT NULL AND fund_scale IS NULL;
+-- 查询个股字段尚未补齐的股票（供 --fetch-stock-info 继续补齐）
+SELECT code, code_name FROM stock_info
+WHERE status = '1' AND (full_name IS NULL OR full_name = '');
 
 -- 首页统计：收录数量 / 已分析数量 / 已分析次数
 SELECT
@@ -530,12 +498,23 @@ JOIN etf_kline_daily k
  AND k.adjustflag = '3';
 ```
 
-## 9. 写入流程建议
+## 9. 写入流程（scripts/fetch_data.py）
 
-1. `login()` → 用 `query_stock_basic` 分批拉取，按 `type` 区分写入 `stock_info`（`type='1'`）与 `etf_info`（`type='5'`）；如需逐日可交易标的，可用 `query_all_stock`。注：`industry` 等字段由独立 LLM 补齐脚本（`scripts/llm_backfill.py`）后续补齐（见第 5、6 步），与分析打分解耦，无需在此通过 `query_stock_industry` 获取。
-2. 对每个标的按 日/周/月 和 前复权(`adjustflag='2'`)/不复权(`'3'`) 分别调用 `query_history_k_data_plus`。
-3. 将返回 `data` 中的 `str` 数值转 `float`，空串转 `NULL`，`INSERT OR REPLACE` 入库。
-4. `commit()` 后可对 `UNIQUE(code, date, adjustflag)` 冲突做 `INSERT OR IGNORE` 增量更新。
-5. 对 `etf_info`：`last_trade_date / last_close / last_pct_chg` 由脚本从 `etf_kline_daily` 回填（见上文示例 SQL）；`category / manager / fund_scale` 由独立 LLM 补齐脚本 `scripts/llm_backfill.py` 循环逐条查缺（`category IS NULL` / `fund_scale IS NULL` 等），按 `code` 执行 `UPDATE` 幂等填充。
-6. 对 `stock_info` 中的 `industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`：由同上的独立 LLM 补齐脚本循环逐条查缺，按 `code` 执行 `UPDATE` 幂等填充。
-7. 结束后 `logout()`。
+| 命令 | 写入内容 | 数据源 |
+|------|----------|--------|
+| `--update-stock-list` | stock_info 列表 + 行情字段 | 腾讯 `stock_zh_a_spot_tx`（一次拉全市场） |
+| `--update-etf-list` | etf_info 列表/类别/规模/管理人 | 新浪 + 同花顺 + 新浪基金（均批量） |
+| `--fetch-stock-info` | stock_info 个股补齐字段（仅未抓过的） | 雪球逐只（限速 + 断点续传） |
+| `--fetch-stock-kline` | 股票日/周/月 K（周/月本地重采样） | 新浪 `stock_zh_a_daily` |
+| `--fetch-etf-kline` | ETF 日/周/月 K（仅不复权） | 新浪 `fund_etf_hist_sina` |
+
+抓取计划：
+
+| 任务 | 频率 |
+|------|------|
+| 列表刷新 + daily 增量（`--incremental`） | 每交易日 |
+| weekly/monthly 增量 | 随 daily 跑，由频率门控决定 |
+| `--fetch-stock-info` | 每周一次或手动 |
+
+增量门控：daily 仅工作日；weekly 周末且未入库或距今超 7 天；monthly 月初前 3 天或距今超 31 天。
+限速与容错：串行 + `--sleep`（默认 0.5）+ 指数退避重试（默认 3 次，1s/4s/16s）；单只失败记日志继续，不中断全量任务。

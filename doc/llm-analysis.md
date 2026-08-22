@@ -61,20 +61,14 @@ score = 0.25×trend + 0.20×momentum + 0.20×valuation + 0.15×volume + 0.20×st
 
 > 分析表 `date` 取**数据最后交易日**（最后一行日 K 的日期），不使用服务器当前日期，避免 UTC 时区跨日问题；"分析日期"≠"触发日期"。
 
-### 基础信息补齐（已拆分为独立脚本，与非分析任务解耦）
+### 基础信息来源（历史说明）
 
-> **变更（MVP 拆分）**：基础信息表中 BaoStock 无法直接获取的字段（股票
+> **变更（issue #32）**：基础信息表中原需 LLM 补齐的字段（股票
 > `industry / last_amount / pb / full_name / total_market_cap / high_52w / low_52w`；
-> ETF `category / manager / fund_scale`）**不再由分析任务回填**，改由独立脚本
-> `scripts/llm_backfill.py` 批量补齐。分析接口只负责打分，两者解耦。
-
-补齐脚本沿用与原实现一致的规则：
-
-- **仅回填空字段**：目标列已有值（非 NULL / 非空串）时**不覆盖**，防止 LLM 幻觉值覆盖已有可靠数据。
-- **入库前校验**：字符串须非空且限长（industry/category ≤100，fullName/manager ≤200）；数值须有限，`high52w` / `low52w` 须为正，其余非负；校验不过的字段直接丢弃。
-- **来源可追溯**：每次发生回填时写入 `llm_backfill_at` 时间戳，便于识别数据来源与清理。
-
-这些字段为**可空**，未补齐（未填充）前为 `NULL`。
+> ETF `category / manager / fund_scale`）现已全部由 Akshare 数据源直接提供，
+> 由 `scripts/fetch_data.py` 采集写入（见 [akshare-api.md](akshare-api.md)）。
+> LLM 补齐脚本 `scripts/llm_backfill.py` 已删除，`llm_backfill_at` 列已从
+> schema 移除。分析接口仍只负责打分。
 
 ## 3. 提示词模板
 

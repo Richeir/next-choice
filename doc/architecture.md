@@ -23,7 +23,7 @@
       │  11 张表           │       │  买入判断/持有天数 │
       └───────────────────┘       └──────────────────┘
 
-外部数据源：BaoStock（Python Library，离线采集脚本写入 SQLite）
+外部数据源：Akshare（Python Library，离线采集脚本写入 SQLite）
 ```
 
 ## 2. 组件职责
@@ -34,17 +34,22 @@
 | **后端 (Nest.js)** | 提供 REST API、读写 SQLite、调用 LLM 分析、调度采集 |
 | **SQLite** | 本地持久化，存储证券信息、K 线、分析结果 |
 | **LLM** | 根据 K 线与信息判断是否值得买入、给出持有天数预测 |
-| **BaoStock** | 外部数据源，经 Python 采集脚本拉取数据入库 |
+| **Akshare** | 外部数据源（腾讯/新浪/雪球/同花顺），经 Python 采集脚本拉取数据入库 |
 
 ## 3. 数据流
 
 ### 3.1 数据入库流（离线）
 
 ```
-BaoStock (Python) --采集脚本--> SQLite (stock_info / etf_info / kline_*)
+Akshare (Python) --采集脚本--> SQLite (stock_info / etf_info / kline_*)
 ```
 
-采集由独立 Python 脚本完成，写入 SQLite 后，Nest.js 只读数据库，不直接依赖 BaoStock。
+采集由独立 Python 脚本完成（`scripts/fetch_data.py`，接口清单见
+[akshare-api.md](akshare-api.md)），写入 SQLite 后，Nest.js 只读数据库，
+不直接依赖 Akshare。
+
+抓取计划：列表刷新 + daily 增量每交易日跑；周/月 K 由日 K 本地重采样；
+个股补齐字段（`--fetch-stock-info`）每周或手动；串行限速 + 指数退避重试。
 
 ### 3.2 分析流（按需/定时）
 
@@ -72,7 +77,7 @@ React --GET /api/...--> Nest.js --SQL--> SQLite --> JSON --> React
 ## 4. 关键设计决策
 
 - **前后端分离**：React 与 Nest.js 独立部署，通过 REST JSON 通信，便于前端富交互。
-- **数据源解耦**：BaoStock 只由 Python 采集脚本接触，Nest.js 不依赖 Python 运行时，降低耦合。
+- **数据源解耦**：Akshare 只由 Python 采集脚本接触，Nest.js 不依赖 Python 运行时，降低耦合。
 - **分析表按历史保存**：分析结果带 `date` 主键，保留时序，便于回看评级变化与回测。
 - **LLM 配置全局化**：提示词模板存于配置（文件/DB），后续迭代可直接改模板，不改代码。见 [llm-analysis.md](llm-analysis.md)。
 

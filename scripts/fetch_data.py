@@ -115,8 +115,28 @@ def update_etf_list(conn, max_retries=3):
 
 VALID_ADJUST = ("2", "3")
 _ADJUST_SINA = {"3": "", "2": "qfq"}
-# 增量重采样的周期边界余量（周 10 天 / 月 40 天，日 K 重拉 1 天覆盖修正）
-_INC_PAD_DAYS = {"daily": 1, "weekly": 10, "monthly": 40}
+# 日 K 增量重拉 1 天覆盖修正；周/月的回溯起点在 _inc_fstart 中对齐周期边界
+
+
+def _inc_fstart(freq, base_date, fallback):
+    """增量模式的抓取起点（base_date 为该频率最后一根 K 线日期，无则 fallback）。
+
+    周/月频率必须对齐到周期边界，否则重采样会用不完整周期覆盖已入库的完整周/月 K：
+    - weekly：回退到 base 所在周的前一周周一；
+    - monthly：回退到 base 所在月的前一个月 1 号；
+    - daily：回退 1 天覆盖修正。
+    """
+    if base_date is None:
+        return fallback
+    d = date.fromisoformat(base_date)
+    if freq == "weekly":
+        prev_week_start = d - timedelta(days=d.weekday() + 7)
+        return prev_week_start.isoformat()
+    if freq == "monthly":
+        first_of_this_month = d.replace(day=1)
+        first_of_prev = (first_of_this_month - timedelta(days=1)).replace(day=1)
+        return first_of_prev.isoformat()
+    return (d - timedelta(days=1)).isoformat()
 
 
 def _due_freqs(freqs, today, last_dates):
@@ -236,13 +256,8 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
         success = True
         try:
             for freq in loop_freqs:
-                if incremental:
-                    base = last_dates.get(freq) or start
-                    pad = _INC_PAD_DAYS[freq]
-                    fstart = (date.fromisoformat(base)
-                              - timedelta(days=pad)).isoformat()
-                else:
-                    fstart = start
+                fstart = _inc_fstart(freq, last_dates.get(freq), start) \
+                    if incremental else start
                 for adj in adjusts:
                     _fetch_one_kline(conn, kind, code, freq, adj, fstart, end,
                                      max_retries)

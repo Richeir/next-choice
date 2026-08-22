@@ -42,8 +42,26 @@ class TestDueFreqs:
                                      {"monthly": "2023-12-29"}) == ["monthly"]
 
 
+class TestIncFstart:
+    def test_none_falls_back(self):
+        assert fetch_data._inc_fstart("weekly", None, "2020-01-01") == "2020-01-01"
+
+    def test_daily_back_one_day(self):
+        assert fetch_data._inc_fstart("daily", "2024-01-05", "") == "2024-01-04"
+
+    def test_weekly_aligns_to_prev_monday(self):
+        # 2024-01-05 周五，所在周截止周日 01-07；回退到前一周周一 2023-12-25
+        assert fetch_data._inc_fstart("weekly", "2024-01-05", "") == "2023-12-25"
+        # base 本身就是周一也一样回退一整周，保证所在周完整
+        assert fetch_data._inc_fstart("weekly", "2024-01-08", "") == "2024-01-01"
+
+    def test_monthly_aligns_to_prev_month_first(self):
+        assert fetch_data._inc_fstart("monthly", "2024-01-31", "") == "2023-12-01"
+        assert fetch_data._inc_fstart("monthly", "2024-03-01", "") == "2024-02-01"
+
+
 class TestIncrementalStart:
-    def test_starts_from_last_date_minus_pad(self, tmp_path, monkeypatch):
+    def test_starts_from_last_date_aligned(self, tmp_path, monkeypatch):
         conn = db.init_db(str(tmp_path / "t.db"), SCHEMA)
         conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
                      " status) VALUES ('600000','浦发银行','SH','1','1')")
@@ -60,5 +78,6 @@ class TestIncrementalStart:
         fetch_data.fetch_stock_kline(conn, ["weekly"], ["3"], "2020-01-01",
                                      "2024-01-31", incremental=True,
                                      today="2024-01-13", sleep_s=0)  # 周六
-        # 最后周 K 2024-01-05，回退 10 天
-        assert seen["start"] == "2023-12-26"
+        # 最后周 K 2024-01-05（周五），起点对齐到前一周周一 2023-12-25，
+        # 保证重采样不会用不完整周期覆盖已入库的完整周 K
+        assert seen["start"] == "2023-12-25"

@@ -43,7 +43,7 @@ def test_kline_primary_key_unique(conn):
         freq="daily",
         adjustflag="3",
         rows=[
-            ["2024-01-02", "sh.600000", "6.63", "6.65", "6.60", "6.60",
+            ["2024-01-02", "600000", "6.63", "6.65", "6.60", "6.60",
              "6.60", "22066700", "146066303", "3", "0.0752", "1", "-0.3021", "0"],
         ],
     )
@@ -54,12 +54,12 @@ def test_kline_primary_key_unique(conn):
         freq="daily",
         adjustflag="3",
         rows=[
-            ["2024-01-02", "sh.600000", "6.99", "6.99", "6.99", "6.99",
+            ["2024-01-02", "600000", "6.99", "6.99", "6.99", "6.99",
              "6.99", "1", "1", "3", "0", "1", "0", "0"],
         ],
     )
     n = conn.execute(
-        "SELECT COUNT(*) FROM stock_kline_daily WHERE code='sh.600000' AND date='2024-01-02'"
+        "SELECT COUNT(*) FROM stock_kline_daily WHERE code='600000' AND date='2024-01-02'"
     ).fetchone()[0]
     assert n == 1
 
@@ -77,13 +77,13 @@ def test_insert_kline_stores_requested_adjustflag(conn):
         freq="daily",
         adjustflag="2",
         rows=[
-            ["2024-01-02", "sh.600000", "6.63", "6.65", "6.60", "6.60",
+            ["2024-01-02", "600000", "6.63", "6.65", "6.60", "6.60",
              "6.60", "22066700", "146066303", "3", "0.0752", "1", "-0.3021", "0"],
         ],
     )
     row = conn.execute(
         "SELECT adjustflag FROM stock_kline_daily "
-        "WHERE code='sh.600000' AND date='2024-01-02'"
+        "WHERE code='600000' AND date='2024-01-02'"
     ).fetchone()
     assert row["adjustflag"] == "2"
 
@@ -96,7 +96,7 @@ def test_insert_kline_wrong_row_length(conn):
             kind="stock",
             freq="daily",
             adjustflag="3",
-            rows=[["2024-01-02", "sh.600000", "6.63"]],
+            rows=[["2024-01-02", "600000", "6.63"]],
         )
 
 
@@ -126,14 +126,14 @@ def test_migrate_adds_last_fetch_date_to_old_table(tmp_path):
 def test_mark_fetched_and_fetched_today(conn):
     conn.execute(
         "INSERT INTO stock_info (code, code_name, type, market) VALUES "
-        "('sh.600000','浦发银行','1','SH')"
+        "('600000','浦发银行','1','SH')"
     )
     conn.execute(
         "INSERT INTO stock_info (code, code_name, type, market) VALUES "
-        "('sz.000001','平安银行','1','SZ')"
+        "('000001','平安银行','1','SZ')"
     )
     conn.commit()
     assert db.fetched_today(conn, "stock", "2026-08-18") == set()
-    db.mark_fetched(conn, "stock", "sh.600000", "2026-08-18")
-    assert db.fetched_today(conn, "stock", "2026-08-18") == {"sh.600000"}
+    db.mark_fetched(conn, "stock", "600000", "2026-08-18")
+    assert db.fetched_today(conn, "stock", "2026-08-18") == {"600000"}
     assert db.fetched_today(conn, "stock", "2026-08-19") == set()

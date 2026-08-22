@@ -1,7 +1,7 @@
 """transform 工具函数单元测试。"""
 import pytest
 
-from transform import kline_table, market_of, to_float
+from transform import is_etf_code, kline_table, market_of, to_float
 
 
 class TestMarketOf:
@@ -19,6 +19,18 @@ class TestMarketOf:
             market_of("900000")
         with pytest.raises(ValueError):
             market_of("sh.600000")
+
+
+class TestIsEtfCode:
+    @pytest.mark.parametrize("code", ["510050", "560010", "588000",
+                                      "159915", "161725"])
+    def test_etf_segments(self, code):
+        assert is_etf_code(code) is True
+
+    @pytest.mark.parametrize("code", ["600000", "688981", "000001",
+                                      "300750", "900000"])
+    def test_non_etf_segments(self, code):
+        assert is_etf_code(code) is False
 
 
 class TestToFloat:

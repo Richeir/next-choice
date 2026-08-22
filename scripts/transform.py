@@ -28,6 +28,11 @@ def market_of(code):
     raise ValueError(f"unknown code segment: {code!r}")
 
 
+def is_etf_code(code):
+    """由 6 位纯数字 code 的号段判断是否为 ETF。"""
+    return code[:2] in _ETF_SH + _ETF_SZ
+
+
 def kline_table(kind, freq):
     """返回 K 线表名，如 kline_table('stock','daily') -> 'stock_kline_daily'。"""
     if kind not in ("stock", "etf"):

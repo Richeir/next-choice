@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import akshare_source as src
 from db import (fetched_today, init_db, insert_kline, kline_max_date,
                 mark_fetched)
-from transform import market_of
+from transform import is_etf_code, market_of
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -298,7 +298,8 @@ def fetch_etf_kline(conn, freqs, adjusts, start, end, force=False,
 
 def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
     """雪球逐只补齐个股字段，仅处理 full_name 为空的在市股票；
-    basic 与 quote 任一成功即写库（部分成功也入库），两者皆失败记 fail。"""
+    basic 与 quote 任一成功即写库（部分成功也入库），两者皆失败记 fail；
+    单只意外异常（如脏数据）记 fail 继续。"""
     import time as _time
     rows = conn.execute(
         "SELECT code FROM stock_info"
@@ -310,8 +311,13 @@ def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
     n_ok = n_fail = 0
     total = len(codes)
     for idx, code in enumerate(codes, 1):
-        basic = src.stock_basic(code, max_retries=max_retries)
-        quote = src.stock_quote(code, max_retries=max_retries)
+        try:
+            basic = src.stock_basic(code, max_retries=max_retries)
+            quote = src.stock_quote(code, max_retries=max_retries)
+        except Exception as e:  # 防御：单只意外异常不中断整体
+            log.warning("stock_info %s unexpected error: %s", code, e)
+            n_fail += 1
+            continue
         if basic is None and quote is None:
             log.warning("stock_info %s: both xq calls failed", code)
             n_fail += 1
@@ -353,8 +359,7 @@ def _ensure_info_row(conn, code, max_retries):
                           (code,)).fetchone()
     if exists:
         return "etf"
-    prefix = code[:2]
-    if prefix in ("51", "56", "58", "15", "16"):
+    if is_etf_code(code):
         conn.execute("INSERT INTO etf_info (code, market, type, status)"
                      " VALUES (?,?,?,?)",
                      (code, market_of(code), "5", "1"))

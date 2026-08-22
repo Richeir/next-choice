@@ -57,3 +57,21 @@ class TestFetchStockInfo:
                             lambda code, **kw: None)
         n_ok, n_fail = fetch_data.fetch_stock_info(conn, sleep_s=0)
         assert (n_ok, n_fail) == (0, 1)
+
+    def test_unexpected_error_counts_fail_and_continues(self, conn,
+                                                        monkeypatch):
+        """单只意外异常（如脏数据）记 fail 继续，不中断整体。"""
+        conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                     " status) VALUES ('000002','万科A','SZ','1','1')")
+        conn.commit()
+
+        def basic(code, **kw):
+            if code == "000002":
+                raise ValueError("bad data")
+            return {"full_name": "浦发银行", "industry": "银行",
+                    "ipo_date": "1999-11-10"}
+        monkeypatch.setattr(fetch_data.src, "stock_basic", basic)
+        monkeypatch.setattr(fetch_data.src, "stock_quote",
+                            lambda code, **kw: None)
+        n_ok, n_fail = fetch_data.fetch_stock_info(conn, sleep_s=0)
+        assert (n_ok, n_fail) == (1, 1)

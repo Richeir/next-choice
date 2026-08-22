@@ -228,7 +228,10 @@ def stock_quote(code, max_retries=3):
         v = kv.get(k)
         if v is None or v == "" or pd.isna(v):
             return None
-        return float(v)
+        try:
+            return float(v)
+        except (TypeError, ValueError):  # 脏数据（如 '-'）视为无数据
+            return None
 
     return {"pb": num("市净率"), "high_52w": num("52周最高"),
             "low_52w": num("52周最低"),

@@ -220,6 +220,16 @@ class TestStockInfoXq:
             "pb": 0.5, "high_52w": 13.6, "low_52w": 8.1,
             "total_market_cap": 3.01e11}
 
+    def test_quote_non_numeric_value_returns_none(self, monkeypatch):
+        """雪球脏数据（如 '-'）不应抛异常，对应字段返回 None。"""
+        raw = _kv_df([("市净率", 0.5), ("52周最高", "-"), ("52周最低", "--"),
+                      ("资产净值/总市值", 3.01e11)])
+        monkeypatch.setattr(src.ak, "stock_individual_spot_xq",
+                            lambda symbol: raw)
+        assert src.stock_quote("600000") == {
+            "pb": 0.5, "high_52w": None, "low_52w": None,
+            "total_market_cap": 3.01e11}
+
     def test_basic_failure_returns_none(self, monkeypatch):
         def boom(symbol):
             raise requests.exceptions.ConnectionError("boom")

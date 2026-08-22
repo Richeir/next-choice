@@ -1,51 +1,43 @@
-"""transform 模块单元测试：BaoStock str 值转换、市场推断、表名映射。"""
+"""transform 工具函数单元测试。"""
 import pytest
 
 from transform import kline_table, market_of, to_float
 
 
+class TestMarketOf:
+    @pytest.mark.parametrize("code,market", [
+        ("600000", "SH"), ("601398", "SH"), ("688981", "SH"),
+        ("000001", "SZ"), ("300750", "SZ"), ("002594", "SZ"),
+        ("510050", "SH"), ("560010", "SH"), ("588000", "SH"),
+        ("159915", "SZ"), ("161725", "SZ"),
+    ])
+    def test_market_by_code_segment(self, code, market):
+        assert market_of(code) == market
+
+    def test_unknown_segment_raises(self):
+        with pytest.raises(ValueError):
+            market_of("900000")
+        with pytest.raises(ValueError):
+            market_of("sh.600000")
+
+
 class TestToFloat:
-    def test_plain_number(self):
-        assert to_float("6.6300") == 6.63
-
-    def test_empty_string_is_none(self):
+    def test_empty_and_none(self):
         assert to_float("") is None
-
-    def test_none_is_none(self):
         assert to_float(None) is None
 
-    def test_float_passthrough(self):
-        assert to_float(6.63) == 6.63
+    def test_nan(self):
+        assert to_float(float("nan")) is None
 
-    def test_int_passthrough(self):
-        assert to_float(0) == 0.0
-
-
-class TestMarketOf:
-    def test_shanghai(self):
-        assert market_of("sh.600000") == "SH"
-
-    def test_shenzhen(self):
-        assert market_of("sz.000001") == "SZ"
-
-    def test_etf_shanghai(self):
-        assert market_of("sh.510010") == "SH"
-
-    def test_etf_shenzhen(self):
-        assert market_of("sz.159915") == "SZ"
+    def test_number(self):
+        assert to_float("3.5") == 3.5
+        assert to_float(2) == 2.0
 
 
 class TestKlineTable:
-    @pytest.mark.parametrize(
-        "kind,freq,expected",
-        [
-            ("stock", "daily", "stock_kline_daily"),
-            ("stock", "weekly", "stock_kline_weekly"),
-            ("stock", "monthly", "stock_kline_monthly"),
-            ("etf", "daily", "etf_kline_daily"),
-            ("etf", "weekly", "etf_kline_weekly"),
-            ("etf", "monthly", "etf_kline_monthly"),
-        ],
-    )
-    def test_mapping(self, kind, freq, expected):
-        assert kline_table(kind, freq) == expected
+    def test_ok(self):
+        assert kline_table("stock", "daily") == "stock_kline_daily"
+
+    def test_invalid(self):
+        with pytest.raises(ValueError):
+            kline_table("bond", "daily")

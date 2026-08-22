@@ -8,14 +8,14 @@ PRAGMA foreign_keys = ON;
 -- ============ 基础信息 ============
 
 CREATE TABLE IF NOT EXISTS stock_info (
-    code            TEXT PRIMARY KEY,  -- 如 sh.600000
+    code            TEXT PRIMARY KEY,  -- 如 600000（6 位纯数字）
     code_name       TEXT,
-    market          TEXT,              -- SH / SZ（由代码前缀推断）
+    market          TEXT,              -- SH / SZ（由代码号段推断）
     type            TEXT,              -- '1' 股票
     ipoDate         TEXT,
     outDate         TEXT,
     status          TEXT,              -- '1' 上市
-    industry        TEXT,              -- 由 LLM 填充
+    industry        TEXT,              -- 由 Akshare 填充
     last_trade_date TEXT,
     last_close      REAL,
     last_pct_chg    REAL,
@@ -26,26 +26,24 @@ CREATE TABLE IF NOT EXISTS stock_info (
     total_market_cap REAL,
     high_52w        REAL,
     low_52w         REAL,
-    last_fetch_date TEXT,             -- 全量抓取完成日（脚本标记，断点续传用）
-    llm_backfill_at TEXT              -- LLM 最近一次回填基础信息时间（ISO 8601）
+    last_fetch_date TEXT             -- 全量抓取完成日（脚本标记，断点续传用）
 );
 
 CREATE TABLE IF NOT EXISTS etf_info (
-    code            TEXT PRIMARY KEY,   -- 如 sh.510010
+    code            TEXT PRIMARY KEY,   -- 如 510050（6 位纯数字）
     code_name       TEXT,
-    market          TEXT,               -- SH / SZ
+    market          TEXT,               -- SH / SZ（由代码号段推断）
     type            TEXT,               -- '5' ETF
     ipoDate         TEXT,
     outDate         TEXT,
     status          TEXT,               -- '1' 上市
-    category        TEXT,               -- 由 LLM 填充
-    manager         TEXT,               -- 由 LLM 填充
+    category        TEXT,               -- 由 Akshare 填充
+    manager         TEXT,               -- 由 Akshare 填充
     last_trade_date TEXT,
     last_close      REAL,
     last_pct_chg    REAL,
-    fund_scale      REAL,               -- 由 LLM 填充
-    last_fetch_date TEXT,               -- 全量抓取完成日（脚本标记，断点续传用）
-    llm_backfill_at TEXT                -- LLM 最近一次回填基础信息时间（ISO 8601）
+    fund_scale      REAL,               -- 由 Akshare 填充
+    last_fetch_date TEXT                -- 全量抓取完成日（脚本标记，断点续传用）
 );
 
 -- ============ K 线数据 ============

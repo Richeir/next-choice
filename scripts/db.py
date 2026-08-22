@@ -41,6 +41,11 @@ _TABLE_COLS = {
     ],
 }
 
+# 增量/重叠重拉时不得用 NULL 覆盖已有值的列：抓取窗口首行的
+# preclose/pctChg 依赖窗口前一根数据，缺失（如停牌）时宁可保留库里
+# 已有的正确值，也不能静默打成 NULL。
+_PROTECT_NULL_COLS = {"preclose", "pctChg"}
+
 # 保持字符串原样的列（不转 float）
 _RAW_COLS = {"date", "code", "adjustflag", "tradestatus", "isST"}
 
@@ -113,16 +118,30 @@ def _kline_columns(kind, freq):
 
 
 def insert_kline(conn, kind, freq, adjustflag, rows):
-    """批量写入 K 线（INSERT OR REPLACE，幂等）。
+    """批量写入 K 线（幂等）。
 
     rows: list[list]，每行列顺序与 _TABLE_COLS[(kind, freq)] 对应。
     数值列自动转 float，date/code/adjustflag/tradestatus/isST 保持原样。
+
+    冲突处理用 ON CONFLICT DO UPDATE（而非 INSERT OR REPLACE）：
+    除 _PROTECT_NULL_COLS 外的列直接覆盖；_PROTECT_NULL_COLS 用
+    COALESCE 保留库中已有值——抓取窗口首行的 preclose/pctChg 依赖窗口
+    前一根数据，缺失时宁可保留旧值也不能静默打成 NULL。
     """
     columns = _kline_columns(kind, freq)
     table = kline_table(kind, freq)
+    placeholders = ",".join("?" for _ in columns)
+    updates = []
+    for c in columns:
+        if c in ("code", "date", "adjustflag"):
+            continue  # 主键不参与更新
+        if c in _PROTECT_NULL_COLS:
+            updates.append(f"{c}=COALESCE(excluded.{c}, {table}.{c})")
+        else:
+            updates.append(f"{c}=excluded.{c}")
     sql = (
-        f"INSERT OR REPLACE INTO {table} ({','.join(columns)}) "
-        f"VALUES ({','.join('?' for _ in columns)})"
+        f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(code, date, adjustflag) DO UPDATE SET {','.join(updates)}"
     )
     adj_idx = columns.index("adjustflag")
     for row in rows:

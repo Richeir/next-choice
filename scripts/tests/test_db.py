@@ -88,6 +88,48 @@ def test_insert_kline_stores_requested_adjustflag(conn):
     assert row["adjustflag"] == "2"
 
 
+def test_insert_kline_protects_preclose_pctchg_from_null(conn):
+    """重叠重拉时新行 preclose/pctChg 为 NULL 不得覆盖已有值；
+    其他列正常覆盖。"""
+    db.insert_kline(
+        conn, kind="stock", freq="daily", adjustflag="3",
+        rows=[["2024-01-02", "600000", 10.0, 11.0, 9.0, 10.0, 9.5,
+               1000, 10000, "3", 1.0, "1", 5.26, "0"]],
+    )
+    # 增量窗口首行：preclose / pctChg 缺失（None），close 等正常
+    db.insert_kline(
+        conn, kind="stock", freq="daily", adjustflag="3",
+        rows=[["2024-01-02", "600000", 10.0, 11.0, 9.0, 10.5, None,
+               1000, 10000, "3", 1.0, "1", None, "0"]],
+    )
+    row = conn.execute(
+        "SELECT close, preclose, pctChg FROM stock_kline_daily "
+        "WHERE code='600000' AND date='2024-01-02'"
+    ).fetchone()
+    assert row["close"] == 10.5       # 普通列被覆盖
+    assert row["preclose"] == 9.5     # NULL 不覆盖已有值
+    assert row["pctChg"] == 5.26
+
+
+def test_insert_kline_null_overwrites_null(conn):
+    """库中原值也是 NULL 时，NULL 写入保持 NULL（不报错）。"""
+    db.insert_kline(
+        conn, kind="stock", freq="daily", adjustflag="3",
+        rows=[["2024-01-02", "600000", 10.0, 11.0, 9.0, 10.0, None,
+               1000, 10000, "3", 1.0, "1", None, "0"]],
+    )
+    db.insert_kline(
+        conn, kind="stock", freq="daily", adjustflag="3",
+        rows=[["2024-01-02", "600000", 10.0, 11.0, 9.0, 10.0, None,
+               1000, 10000, "3", 1.0, "1", None, "0"]],
+    )
+    row = conn.execute(
+        "SELECT preclose, pctChg FROM stock_kline_daily "
+        "WHERE code='600000' AND date='2024-01-02'"
+    ).fetchone()
+    assert row["preclose"] is None and row["pctChg"] is None
+
+
 def test_insert_kline_wrong_row_length(conn):
     # 行字段数少于列集应显式报错，避免 zip 静默截断
     with pytest.raises(ValueError):

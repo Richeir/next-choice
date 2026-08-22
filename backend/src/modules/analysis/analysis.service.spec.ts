@@ -131,29 +131,36 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   } as unknown as ConfigService;
 }
 
-/** 构造含 60 根日 K 的标的（最后交易日 2024-02-29）。 */
-function setupExecuteEnv() {
+/** 构造含 60 根日 K 的标的（最后交易日 2024-02-29）。
+ * kind='etf' 时按采集侧现状只插入不复权（'3'）数据。 */
+function setupExecuteEnv(kind: SecurityType = 'stock') {
   const db = new DatabaseService({ path: ':memory:', schemaPath: SCHEMA });
   const conn = db.getConnection();
-  conn.prepare(`INSERT INTO stock_info (code, last_trade_date) VALUES ('600000', '2024-02-29')`).run();
+  const code = kind === 'stock' ? '600000' : '510050';
+  const infoTable = kind === 'stock' ? 'stock_info' : 'etf_info';
+  conn.prepare(`INSERT INTO ${infoTable} (code, last_trade_date) VALUES (?, '2024-02-29')`).run(code);
+  // ETF 采集侧仅存不复权（新浪源不支持 ETF 复权），股票两种复权都有
+  const adjustflags = kind === 'stock' ? ['2', '3'] : ['3'];
   const insert = conn.prepare(
-    `INSERT INTO stock_kline_daily
+    `INSERT INTO ${kind}_kline_daily
        (date, code, open, high, low, close, preclose, volume, amount, adjustflag,
         turn, tradestatus, pctChg, isST)
-     VALUES (?, '600000', 10, 10, 10, ?, 10, 1000000, 0, '2', 0, '1', 0, '0')`,
+     VALUES (?, ?, 10, 10, 10, ?, 10, 1000000, 0, ?, 0, '1', 0, '0')`,
   );
   const base = new Date('2024-01-01T00:00:00Z');
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10);
-    insert.run(d, 10 + i * 0.1);
+  for (const adjustflag of adjustflags) {
+    for (let i = 0; i < 60; i++) {
+      const d = new Date(base.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+      insert.run(d, code, 10 + i * 0.1, adjustflag);
+    }
   }
   const analysisRepo = new AnalysisRepository(db);
   const klineRepo = new KlineRepository(db);
   return { db, conn, analysisRepo, klineRepo };
 }
 
-function makeExecuteService(options: { llmResult?: LlmResult | null } = {}) {
-  const { db, conn, analysisRepo, klineRepo } = setupExecuteEnv();
+function makeExecuteService(options: { llmResult?: LlmResult | null; kind?: SecurityType } = {}) {
+  const { db, conn, analysisRepo, klineRepo } = setupExecuteEnv(options.kind ?? 'stock');
   const llm = {
     analyze: jest.fn().mockResolvedValue(options.llmResult ?? null),
   } as unknown as LlmService;
@@ -219,6 +226,14 @@ describe('AnalysisService.execute', () => {
     expect(dims).toHaveProperty('trend');
     expect(dims).toHaveProperty('stability');
     expect(row.note).toBeTruthy();
+  });
+
+  it('ETF 用不复权（adjustflag=3）K 线：仅有不复权数据也能分析成功', async () => {
+    const { execute, conn } = makeExecuteService({ kind: 'etf' });
+    await execute('etf', '510050');
+    const row = conn.prepare(`SELECT * FROM etf_analysis WHERE code = '510050'`).get() as Record<string, unknown>;
+    expect(String(row.date)).toBe('2024-02-29');
+    expect(row.score).not.toBeNull();
   });
 });
 

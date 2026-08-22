@@ -4,11 +4,11 @@
 
 ## 项目概览
 
-- Next.js demo 项目，含 BaoStock 行情数据采集（Python）与 Nest.js 后端。
+- Next.js demo 项目，含 Akshare 行情数据采集（Python）与 Nest.js 后端。
 - 关键目录：
   - `backend/database/schema.sql`：SQLite schema 单一来源（Python 脚本与后端共用）。
-  - `scripts/`：数据采集脚本（BaoStock -> SQLite），含 `fetch_data.py`、`db.py`、`transform.py`。
-  - `doc/`：设计文档（架构、DB、BaoStock API、LLM 分析等）。
+  - `scripts/`：数据采集脚本（Akshare -> SQLite），含 `fetch_data.py`、`akshare_source.py`、`db.py`、`transform.py`。
+  - `doc/`：设计文档（架构、DB、Akshare API、LLM 分析等）。
 - 默认数据入库路径：`data/market.db`。
 
 ## 沟通偏好

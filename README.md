@@ -1,12 +1,12 @@
 # next-choice
 
-> 股票分析 Demo（M·STOCK）：用 BaoStock 拉取行情 → SQLite 落地 → Nest.js REST → React 前端展示，并接入 LLM 给出买入判断与持有天数。
+> 股票分析 Demo（M·STOCK）：用 Akshare 拉取行情 → SQLite 落地 → Nest.js REST → React 前端展示，并接入 LLM 给出买入判断与持有天数。
 
 ## 项目简介
 
 `next-choice` 是一个本地化、轻量级的股票 / ETF 数据与分析 Demo，覆盖完整的数据链路：
 
-- **采集**：独立 Python 脚本从 [BaoStock](http://baostock.com/baostock/index.php/A%E8%82%A1K%E7%BA%BF%E6%95%B0%E6%8D%AE) 拉取证券基础信息和日/周/月 K 线，幂等写入本地 SQLite。
+- **采集**：独立 Python 脚本基于 [Akshare](https://akshare.akfamily.xyz/)（腾讯/新浪/雪球/同花顺源）拉取证券基础信息和日/周/月 K 线，幂等写入本地 SQLite。
 - **存储**：SQLite 单库（默认 `data/market.db`），schema 在 `backend/database/schema.sql` 单一来源，被 Python 脚本与 Nest.js 后端共用。
 - **后端**：Nest.js 10 + better-sqlite3，提供 REST API（列表/详情/K 线/统计/分析任务/配置）。
 - **前端**：React 18 + Vite 5 + React Router 6 + ECharts，展示首页统计、列表、详情与 K 线。
@@ -18,7 +18,7 @@
 next-choice/
 ├── frontend/         # React + Vite + TS 前端
 ├── backend/          # Nest.js + TS + better-sqlite3 后端
-├── scripts/          # Python 采集脚本（BaoStock → SQLite）
+├── scripts/          # Python 采集脚本（Akshare → SQLite）
 ├── backend/database/schema.sql   # SQLite schema 唯一来源
 ├── data/             # SQLite 数据库文件（默认 market.db，被 git 忽略）
 ├── doc/              # 设计文档（架构、API、DB、LLM 等）
@@ -33,7 +33,7 @@ next-choice/
 | 前端 | React / Vite / TypeScript / React Router / Axios / ECharts | React 18、Vite 5、TS 5 |
 | 后端 | Nest.js / TypeScript / better-sqlite3 / class-validator | Nest 10、TS 5、better-sqlite3 13 |
 | 数据库 | SQLite（文件型，默认 `data/market.db`） | 3.x |
-| 采集 | Python + BaoStock | Python ≥ 3.11、BaoStock 0.8.8 |
+| 采集 | Python + Akshare | Python ≥ 3.11、Akshare 1.18.x |
 | LLM | OpenAI 兼容接口（可选） | SDK 4.x |
 
 > 详细版本与选型理由见 [`doc/tech-stack.md`](doc/tech-stack.md)。
@@ -52,7 +52,7 @@ next-choice/
 git clone <repo-url> next-choice
 cd next-choice
 
-# 创建 venv 并安装 BaoStock
+# 创建 venv 并安装 Akshare
 python3 -m venv scripts/.venv
 source scripts/.venv/bin/activate
 pip install -r scripts/requirements.txt
@@ -63,11 +63,11 @@ python scripts/fetch_data.py --update-etf-list
 # 拉取 A 股基础信息（写入 stock_info 表）
 python scripts/fetch_data.py --update-stock-list
 
-# 拉取若干股票/ETF 的 K 线（默认 5 年窗口、日 K、不复权 + 前复权）
+# 拉取若干股票/ETF 的 K 线（6 位纯数字代码；默认 5 年窗口，周/月由日 K 本地重采样）
 python scripts/fetch_data.py \
     --db data/market.db \
-    --codes sh.600000,sz.159915 \
-    --freq daily --adjust 2,3
+    --codes 600000,510050 \
+    --freq daily,weekly,monthly --adjust 2,3
 ```
 
 > 参数与回溯窗口约定见 [`scripts/README.md`](scripts/README.md)。
@@ -140,7 +140,7 @@ npm run dev            # http://localhost:5173
 ## 测试
 
 ```bash
-# Python：单元 + E2E（E2E 会真实连接 BaoStock）
+# Python：单元 + E2E（E2E 会真实连接 Akshare 数据源）
 cd scripts && source .venv/bin/activate
 python -m pytest tests -q -m "not e2e"   # 仅单元
 python -m pytest tests -q                 # 全部
@@ -163,7 +163,7 @@ npm test
 2. [技术栈](doc/tech-stack.md) · [数据库设计](doc/db-design.md)
 3. [API 设计](doc/api-design.md) · [后端模块](doc/backend/modules.md)
 4. [LLM 分析](doc/llm-analysis.md) · [前端页面](doc/frontend/pages.md)
-5. [BaoStock API 参考](doc/baostock-api.md)
+5. [Akshare API 参考](doc/akshare-api.md)
 
 各子项目的更细使用说明：
 
@@ -182,4 +182,4 @@ npm test
 - “已分析 / 待分析”状态筛选：后端暂未提供按分析状态过滤的接口，前端按当前页客户端过滤。
 - 首页 ETF 卡片“已分析”数：`stats` 接口仅给出股票 + ETF 合计的 `analyzedCnt`，ETF 卡片按同一数值计算并封顶 100%。
 - 行业 / 管理人下拉选项从已加载数据累积（后端暂无字典接口）。
-- ETF K 线数据范围自 **2026-01-05** 起；股票自 **1990-12-19** 起（受 BaoStock 数据源限制）。
+- K 线默认回溯 5 年窗口（可用 `--start` 扩展更早历史）；ETF K 线仅存不复权数据（新浪源不支持 ETF 复权，详见 [doc/akshare-api.md](doc/akshare-api.md)）。

@@ -1,6 +1,6 @@
 # next-choice Backend
 
-Nest.js 后端，为前端提供 REST API 并读写 SQLite（数据由 BaoStock Python 采集脚本写入 `data/market.db`）。
+Nest.js 后端，为前端提供 REST API 并读写 SQLite（数据由 Akshare Python 采集脚本写入 `data/market.db`）。
 
 ## 技术栈
 

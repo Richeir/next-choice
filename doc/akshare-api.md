@@ -10,11 +10,17 @@
 | 股票日 K | `stock_zh_a_daily` | 新浪 | 逐只 | `adjust`：`""` 不复权 / `"qfq"` 前复权 / `"hfq"` 后复权；含换手率列 `turnover` |
 | 股票周/月 K | —（本地重采样） | — | — | 数据源无直抓接口，由日 K 聚合：open 首值 / close 尾值 / high max / low min / volume+amount 求和 |
 | 个股基本信息 | `stock_individual_basic_info_xq` | 雪球 | 逐只（`SH600000` 式） | `org_name_cn` 全称、`affiliate_industry.ind_name` 行业、`listed_date` 上市日期（毫秒时间戳） |
-| 个股实时估值 | `stock_individual_spot_xq` | 雪球 | 逐只 | `市净率`、`52周最高`、`52周最低`、`资产净值/总市值`（元） |
+| 个股实时估值 | `stock_individual_spot_xq` | 雪球 | 逐只 | `市净率`、`52周最高`、`52周最低`、`资产净值/总市值`（元）；ETF 同样适用（雪球把 ETF 当 quote），`--fetch-etf-info` 复用本接口补齐 `high_52w`/`low_52w` |
 | ETF 列表 | `fund_etf_category_sina`（参数 `"ETF基金"`） | 新浪 | 一次拉全量 | 字段：`代码`（带小写前缀如 `sh510050`，脚本剥离并用于市场判断）、`名称` |
 | ETF 日 K | `fund_etf_hist_sina` | 新浪 | 逐只 | **仅不复权**；返回全量历史，脚本本地按日期过滤；含 `prevclose` |
 | ETF 类别 | `fund_etf_category_ths`（参数 `"ETF基金"`） | 同花顺 | 一次拉全量 | `基金代码` → `基金类型` |
 | ETF 规模/管理人 | `fund_scale_open_sina` | 新浪 | 一次拉全量 | 覆盖全部开放式基金（含 ETF），`总募集规模`（万→元）、`基金经理`、`成立日期` |
+
+> **ETF 基金详情接口不可用**：`fund_individual_basic_info_xq` /
+> `fund_individual_detail_info_xq` 走蛋卷基金
+> （`danjuanfunds.com/djapi/fund/{code}`），仅覆盖蛋卷销售的场外基金，
+> 对场内 ETF 返回 `该基金暂不销售`（2026-08-22 实测）；故 ETF 信息补齐
+> 用雪球 quote 接口（见上表）。
 
 ## 2. 代码格式约定
 
@@ -52,6 +58,7 @@
 | 列表刷新 + daily 增量 | 每交易日 | `--update-stock-list` / `--update-etf-list` + `--fetch-*-kline --incremental` |
 | weekly/monthly 增量 | 随 daily 跑 | 由频率门控自动决定 |
 | 个股信息补齐 | 每周一次或手动 | `--fetch-stock-info [--limit N]` |
+| ETF 信息补齐（52周高低） | 每周一次或手动 | `--fetch-etf-info [--limit N]` |
 
 限速与容错：串行 + `--sleep`（默认 0.5 秒/只）+ 指数退避重试（默认 3 次，
 1s/4s/16s）。接口清单如有失效，优先升级 `akshare` 版本再核对本文档。

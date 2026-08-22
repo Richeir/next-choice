@@ -25,6 +25,9 @@ cd scripts
 # 3. 雪球逐只补齐个股字段（全称/行业/IPO/PB/52周），只处理未抓过的
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-info --limit 10
 
+# 3.5 雪球逐只补齐 ETF 字段（52周高低），只处理未抓过的
+.venv/bin/python fetch_data.py --db ../data/market.db --fetch-etf-info --limit 10
+
 # 4. 按 stock_info 全量抓 A 股 K 线（周/月由日 K 本地重采样）
 .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-kline \
     --freq daily,weekly,monthly --adjust 2,3 --start 2026-01-05
@@ -49,6 +52,7 @@ cd scripts
 | `--update-stock-list` | 刷新 A 股列表与行情字段 | 腾讯 `stock_zh_a_spot_tx` |
 | `--update-etf-list` | 刷新 ETF 列表/类别/规模/管理人 | 新浪 + 同花顺 + 新浪基金 |
 | `--fetch-stock-info [--limit N]` | 补齐个股字段（仅 `full_name` 为空的） | 雪球（逐只） |
+| `--fetch-etf-info [--limit N]` | 补齐 ETF 52周高低（仅 `high_52w` 为空的） | 雪球（逐只） |
 | `--fetch-stock-kline` | 抓 A 股 K 线 | 新浪日 K + 本地重采样 |
 | `--fetch-etf-kline` | 抓 ETF K 线（仅不复权） | 新浪日 K + 本地重采样 |
 | `--codes 600000,...` | 指定代码抓取 | 同上 |

@@ -11,6 +11,9 @@
     # 雪球逐只补齐个股字段（全称/行业/IPO/PB/52周高低），只处理未抓过的
     python fetch_data.py --fetch-stock-info [--limit 10]
 
+    # 雪球逐只补齐 ETF 字段（52周高低），只处理未抓过的
+    python fetch_data.py --fetch-etf-info [--limit 10]
+
     # 按 info 表全量抓 K 线（周/月由日 K 本地重采样）
     python fetch_data.py --fetch-stock-kline --freq daily,weekly,monthly \
         --adjust 2,3 --start 2026-01-05
@@ -349,6 +352,51 @@ def fetch_stock_info(conn, limit=None, sleep_s=0.5, max_retries=3):
     return n_ok, n_fail
 
 
+def fetch_etf_info(conn, limit=None, sleep_s=0.5, max_retries=3):
+    """雪球逐只补齐 ETF 字段（high_52w/low_52w），仅处理 high_52w 为空的
+    在市 ETF；quote 失败记 fail，单只意外异常记 fail 继续。"""
+    import time as _time
+    rows = conn.execute(
+        "SELECT code FROM etf_info"
+        " WHERE status='1' AND high_52w IS NULL"
+        " ORDER BY code").fetchall()
+    codes = [r["code"] for r in rows]
+    if limit is not None:
+        codes = codes[:limit]
+    n_ok = n_fail = 0
+    total = len(codes)
+    for idx, code in enumerate(codes, 1):
+        try:
+            quote = src.stock_quote(code, max_retries=max_retries)
+        except Exception as e:  # 防御：单只意外异常不中断整体
+            log.warning("etf_info %s unexpected error: %s", code, e)
+            n_fail += 1
+            continue
+        if quote is None:
+            log.warning("etf_info %s: xq quote failed", code)
+            n_fail += 1
+            continue
+        mapping = {"high_52w": quote.get("high_52w"),
+                   "low_52w": quote.get("low_52w")}
+        sets, vals = [], []
+        for col, v in mapping.items():
+            if v is not None:
+                sets.append(f"{col}=?")
+                vals.append(v)
+        if sets:
+            vals.append(code)
+            conn.execute(f"UPDATE etf_info SET {', '.join(sets)}"
+                         " WHERE code=?", vals)
+            conn.commit()
+        n_ok += 1
+        if idx % 50 == 0 or idx == total:
+            print(f"[etf-info] {idx}/{total} ok={n_ok} fail={n_fail}",
+                  flush=True)
+        if idx < total and sleep_s > 0:
+            _time.sleep(sleep_s)
+    return n_ok, n_fail
+
+
 def _ensure_info_row(conn, code, max_retries):
     """--codes 路径：若 info 表无该 code，按号段判断股票/ETF 写入最小行。"""
     exists = conn.execute("SELECT 1 FROM stock_info WHERE code=?",
@@ -410,6 +458,8 @@ def build_parser():
                        help="刷新 ETF 列表/类别/规模/管理人")
     group.add_argument("--fetch-stock-info", action="store_true",
                        help="雪球逐只补齐个股字段（仅未抓过的）")
+    group.add_argument("--fetch-etf-info", action="store_true",
+                       help="雪球逐只补齐 ETF 52周高低（仅未抓过的）")
     group.add_argument("--fetch-stock-kline", action="store_true",
                        help="按 stock_info 全量抓 A 股 K 线")
     group.add_argument("--fetch-etf-kline", action="store_true",
@@ -424,7 +474,8 @@ def build_parser():
     parser.add_argument("--start", default=None, help="起始日期 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="结束日期 YYYY-MM-DD")
     parser.add_argument("--limit", type=int, default=None,
-                        help="--fetch-stock-info 限制处理数量")
+                        help="--fetch-stock-info / --fetch-etf-info"
+                             " 限制处理数量")
     parser.add_argument("--sleep", type=float, default=0.5,
                         help="逐只抓取的间隔秒数（默认 0.5）")
     parser.add_argument("--max-retries", type=int, default=3,
@@ -461,6 +512,11 @@ def main(argv=None):
                                             sleep_s=args.sleep,
                                             max_retries=args.max_retries)
             print(f"done. db={args.db} stock_info ok={n_ok} fail={n_fail}")
+        elif args.fetch_etf_info:
+            n_ok, n_fail = fetch_etf_info(conn, limit=args.limit,
+                                          sleep_s=args.sleep,
+                                          max_retries=args.max_retries)
+            print(f"done. db={args.db} etf_info ok={n_ok} fail={n_fail}")
         elif args.fetch_stock_kline or args.fetch_etf_kline:
             freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
             adjusts = ([a.strip() for a in args.adjust.split(",") if a.strip()]

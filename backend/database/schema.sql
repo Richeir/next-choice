@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS etf_info (
     last_close      REAL,
     last_pct_chg    REAL,
     fund_scale      REAL,               -- 由 Akshare 填充
+    high_52w        REAL,               -- 雪球逐只补齐
+    low_52w         REAL,               -- 雪球逐只补齐
     last_fetch_date TEXT                -- 全量抓取完成日（脚本标记，断点续传用）
 );
 

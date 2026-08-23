@@ -157,6 +157,8 @@ Expected: `src-tauri/` 生成，含 `tauri.conf.json`、`Cargo.toml`、`src/main
 ```
 
 > 说明：`bundle.externalBin` 中 `binaries/backend` 对应 `src-tauri/binaries/backend-<target-triple>`（Task 3 生成）。
+>
+> **tauri-build 硬约束**：配置 externalBin 后，编译期 `tauri-build` 会无条件 `copy_binaries`，要求目标文件存在，否则 `cargo check` 报 `resource path binaries/backend-<triple> doesn't exist`。因此 Task 2 需先创建一个 **gitignored 空占位文件** `src-tauri/binaries/backend-<host-triple>`（`touch` 即可），让编译通过；Task 3 用真实 pkg 产物覆盖它。
 
 - [ ] **Step 4: 配置 capabilities 权限**
 
@@ -203,6 +205,7 @@ tauri::Builder::default()
 
 ```
 src-tauri/target/
+src-tauri/binaries/
 ```
 
 - [ ] **Step 7: 编译验证**

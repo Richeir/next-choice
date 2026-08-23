@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, message } from '@tauri-apps/plugin-dialog';
 import { IS_TAURI } from '../config';
 
 export default function DbPicker() {
@@ -17,7 +17,7 @@ export default function DbPicker() {
     if (typeof selected === 'string') {
       await invoke('set_db_path', { path: selected });
       setPath(selected);
-      alert('已保存数据库路径，请重启应用生效。');
+      await message('已保存数据库路径，请重启应用生效。');
     }
   };
 

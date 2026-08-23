@@ -11,6 +11,7 @@ export interface SecuritiesListQuery {
   category?: string;
   manager?: string;
   status?: string;
+  analysisStatus?: 'analyzed' | 'pending';
   sortBy?: string;
   order?: 'asc' | 'desc';
   page?: number;

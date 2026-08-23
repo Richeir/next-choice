@@ -11,7 +11,10 @@ export interface ListOptions {
   industry?: string;
   category?: string;
   manager?: string;
+  /** 证券上市状态（'1' 上市 / '0' 退市），对应 info 表的 status 列。 */
   status?: string;
+  /** 是否已有分析记录：'analyzed' / 'pending'。与上市状态无关。 */
+  analysisStatus?: 'analyzed' | 'pending';
 }
 
 export interface Paginated<T> {
@@ -146,6 +149,13 @@ export abstract class SecuritiesBase {
     if (opts.status) {
       clauses.push(`si.status = ?`);
       params.push(opts.status);
+    }
+    if (opts.analysisStatus === 'analyzed' || opts.analysisStatus === 'pending') {
+      // 下推到 SQL，使 total 与筛选结果一致（客户端按页过滤会让分页数矛盾）
+      const op = opts.analysisStatus === 'analyzed' ? 'EXISTS' : 'NOT EXISTS';
+      clauses.push(
+        `${op} (SELECT 1 FROM ${this.cfg.analysisTable} an WHERE an.code = si.code)`,
+      );
     }
     for (const field of this.cfg.filterFields) {
       const val = (opts as unknown as Record<string, unknown>)[field];

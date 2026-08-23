@@ -26,6 +26,11 @@ export class ListQueryDto {
   @IsString()
   status?: string;
 
+  /** 分析状态筛选：analyzed（已分析）/ pending（待分析）。 */
+  @IsOptional()
+  @IsIn(['analyzed', 'pending'])
+  analysisStatus?: 'analyzed' | 'pending';
+
   @IsOptional()
   @IsString()
   sortBy?: string;

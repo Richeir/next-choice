@@ -59,8 +59,8 @@ export default function HomePage() {
         <Empty />
       ) : (
         <div className="stat-cards">
-          <StatCard title="股票 · STOCKS" total={stats.stockCnt} analyzed={stats.analyzedCnt} />
-          <StatCard title="ETF · 交易所基金" total={stats.etfCnt} analyzed={stats.analyzedCnt} />
+          <StatCard title="股票 · STOCKS" total={stats.stockCnt} analyzed={stats.stockAnalyzedCnt} />
+          <StatCard title="ETF · 交易所基金" total={stats.etfCnt} analyzed={stats.etfAnalyzedCnt} />
         </div>
       )}
     </div>

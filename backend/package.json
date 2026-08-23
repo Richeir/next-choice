@@ -50,7 +50,8 @@
       "dist/**/*.js"
     ],
     "assets": [
-      "node_modules/better-sqlite3/prebuilds/*.node"
+      "node_modules/better-sqlite3/prebuilds/*.node",
+      "database/schema.sql"
     ],
     "outputPath": "build"
   },

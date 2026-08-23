@@ -59,15 +59,23 @@ pub fn run() {
             let db_path = resolve_db_path(app.handle());
             let sidecar = app.shell().sidecar("backend")
                 .expect("sidecar binary missing; run `npm run build:sidecar` in backend/");
+            // 后端是常驻桌面服务，禁掉"放行全部来源"的缺省 CORS：
+            // 只允许 Tauri webview 来源（macOS WKWebView 用 tauri://localhost，
+            // Windows/Linux WebView2 用 http://tauri.localhost），防止任何网页读
+            // 写 localhost:3100（含 POST /api/analyze 触发 LLM 配额）。
+            // 浏览器 dev（npm run start:dev）不设此变量，保持 origin: true。
+            // tauri dev（debug 构建）下桌面前端走绝对地址 http://localhost:3100/api，
+            // 而 WebView 页面来源是 devUrl http://localhost:5173，需额外放行该 origin；
+            // tauri build（release 构建）只用 Tauri origin。
+            let cors_origin = if cfg!(debug_assertions) {
+                "tauri://localhost,http://tauri.localhost,http://localhost:5173"
+            } else {
+                "tauri://localhost,http://tauri.localhost"
+            };
             let (mut rx, child) = sidecar
                 .env("PORT", "3100")
                 .env("DB_PATH", &db_path)
-                // 后端是常驻桌面服务，禁掉"放行全部来源"的缺省 CORS：
-                // 只允许 Tauri webview 来源（macOS WKWebView 用 tauri://localhost，
-                // Windows/Linux WebView2 用 http://tauri.localhost），防止任何网页读
-                // 写 localhost:3100（含 POST /api/analyze 触发 LLM 配额）。
-                // 浏览器 dev（npm run start:dev）不设此变量，保持 origin: true。
-                .env("CORS_ORIGIN", "tauri://localhost,http://tauri.localhost")
+                .env("CORS_ORIGIN", cors_origin)
                 .spawn()
                 .expect("failed to spawn backend sidecar");
             app.manage(BackendChild(Mutex::new(Some(child))));

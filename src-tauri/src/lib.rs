@@ -62,6 +62,12 @@ pub fn run() {
             let (mut rx, child) = sidecar
                 .env("PORT", "3100")
                 .env("DB_PATH", &db_path)
+                // 后端是常驻桌面服务，禁掉"放行全部来源"的缺省 CORS：
+                // 只允许 Tauri webview 来源（macOS WKWebView 用 tauri://localhost，
+                // Windows/Linux WebView2 用 http://tauri.localhost），防止任何网页读
+                // 写 localhost:3100（含 POST /api/analyze 触发 LLM 配额）。
+                // 浏览器 dev（npm run start:dev）不设此变量，保持 origin: true。
+                .env("CORS_ORIGIN", "tauri://localhost,http://tauri.localhost")
                 .spawn()
                 .expect("failed to spawn backend sidecar");
             app.manage(BackendChild(Mutex::new(Some(child))));

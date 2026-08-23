@@ -324,8 +324,9 @@ if (!target) throw new Error(`Unsupported host: ${process.platform}/${process.ar
 
 // 1) nest build -> dist/
 execSync('npm run build', { cwd: root, stdio: 'inherit' });
-// 2) pkg -> backend/build/mstock-backend
-execSync(`npx @yao-pkg/pkg . --target ${target} --output build/backend`, {
+// 2) pkg -> backend/build/backend
+// backend/package.json 无 main/bin 字段，必须显式传入口文件（否则 `pkg .` 报 entry 缺失）
+execSync(`npx @yao-pkg/pkg dist/main.js --target ${target} --output build/backend`, {
   cwd: root,
   stdio: 'inherit',
 });

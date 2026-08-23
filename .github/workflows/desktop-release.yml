@@ -1,0 +1,41 @@
+name: publish
+on:
+  workflow_dispatch:
+  push:
+    branches: [release]
+jobs:
+  publish-tauri:
+    permissions: { contents: write }
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arm64（Apple Silicon）用默认 macos-latest（arm64 runner）
+          - { platform: macos-latest, args: '--target aarch64-apple-darwin' }
+          # x86_64 必须用 Intel runner（macos-13），arm64 runner 无法编译 x64 原生模块
+          - { platform: macos-13, args: '--target x86_64-apple-darwin' }
+          - { platform: windows-latest, args: '' }
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: "${{ matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}"
+      - name: Install frontend deps
+        run: cd frontend && npm ci
+      - name: Install backend deps
+        run: cd backend && npm ci
+      - name: Build backend sidecar
+        run: cd backend && npm run build:sidecar
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'M·STOCK v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

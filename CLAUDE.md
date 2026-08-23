@@ -73,6 +73,14 @@ npm test               # vitest
 npm run build          # tsc -b && vite build
 ```
 
+桌面（Tauri 2，`src-tauri/`；桌面端是查看器，不新增采集功能、不改 Python 脚本、不影响浏览器端）：
+
+```bash
+cd backend && npm run build:sidecar   # 打包 Nest.js 后端为 pkg sidecar 单文件
+npx --prefix frontend tauri dev       # 桌面开发模式（自动拉起 Vite + sidecar）
+npx --prefix frontend tauri build     # 打包分发
+```
+
 ## 架构要点
 
 - **SQLite schema 单一来源**：`backend/database/schema.sql`（11 张表），Python（`scripts/db.py`）与 Nest.js 后端共用；默认库 `data/market.db`（gitignored，不入库）。
@@ -81,8 +89,9 @@ npm run build          # tsc -b && vite build
 - **后端分层**（`backend/src/`）：`database.service.ts` 持有 better-sqlite3 连接；`modules/*` 每域一组 controller/service/repository；`jobs/job-manager.service.ts` 管理异步分析任务（analyze 返回 jobId，前端轮询）；`common/scoring.ts` 纯技术面评分；`common/mapper.ts` 做行→DTO 映射。
 - **分析双模式**：无 `LLM_API_KEY` 时仅技术面评分（开箱即用）；配置后经 `llm.service.ts` 调 OpenAI 兼容接口，提示词模板可由 `GET/PUT /api/config/analysis` 在线覆盖并落库（DB 优先于文件）。
 - **前端**（`frontend/src/`）：页面在 `pages/`，列表/筛选/分页通用逻辑收敛在 `components/SecurityListPage.tsx` + `hooks/useListPage.ts`，API 封装在 `api/client.ts`，类型在 `api/types.ts`。
+- **桌面端（查看器）**（`src-tauri/`）：Tauri 2 壳，Nest.js 后端由 `backend/build-sidecar.mjs` 打成 pkg 单文件 sidecar（`src-tauri/binaries/backend-<triple>`），Rust 在 `setup()` 中 spawn 并注入 `PORT=3100`/`DB_PATH`，退出时 kill；前端桌面环境走 HashRouter、API 直连 `http://localhost:3100/api`。数据库路径经「数据源」写入 `app_config_dir/db_path.txt`。详见 `doc/desktop.md`。
 - **环境变量**：`DB_PATH`（覆盖数据库路径）、`PORT`（后端端口）、`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`（LLM 分析，见 `.env.example`）。
 
 ## 文档索引
 
-深读优先 `doc/`：`architecture.md`（架构与数据流）、`db-design.md`（字段/索引）、`api-design.md`（接口约定）、`akshare-api.md`（接口清单与已知限制）、`llm-analysis.md`。各子项目另有 `backend/README.md`、`frontend/README.md`、`scripts/README.md`。
+深读优先 `doc/`：`architecture.md`（架构与数据流）、`db-design.md`（字段/索引）、`api-design.md`（接口约定）、`akshare-api.md`（接口清单与已知限制）、`llm-analysis.md`、`desktop.md`（桌面应用架构与打包）。各子项目另有 `backend/README.md`、`frontend/README.md`、`scripts/README.md`。

@@ -44,8 +44,8 @@
 export const IS_TAURI =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-/** API 基址：桌面端直连 sidecar 的本地服务，浏览器端走 Vite proxy（/api）。 */
-export const API_BASE_URL = IS_TAURI ? 'http://localhost:3100' : '/api';
+/** API 基址：桌面端直连 sidecar 的本地服务（后端全局前缀 /api），浏览器端走 Vite proxy（/api）。 */
+export const API_BASE_URL = IS_TAURI ? 'http://localhost:3100/api' : '/api';
 ```
 
 - [ ] **Step 2: client.ts 改用 API_BASE_URL**
@@ -87,7 +87,7 @@ Expected: 构建成功，产出 `frontend/dist/`。
 
 ```bash
 git add frontend/src/main.tsx frontend/src/config.ts frontend/src/api/client.ts
-git commit -m "feat(frontend): support desktop runtime via hash router and env-aware api base"
+git commit -m "feat(frontend): use hash router and env-aware api base"
 ```
 
 ---

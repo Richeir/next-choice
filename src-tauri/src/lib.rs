@@ -5,14 +5,25 @@ use tauri_plugin_shell::{process::{CommandChild, CommandEvent}, ShellExt};
 struct BackendChild(Mutex<Option<CommandChild>>);
 
 #[tauri::command]
-fn get_db_path(_: tauri::AppHandle) -> Option<String> { None }
+fn get_db_path(app: tauri::AppHandle) -> Option<String> {
+    let dir = app.path().app_config_dir().ok()?;
+    std::fs::read_to_string(dir.join("db_path.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
 
 #[tauri::command]
-fn set_db_path(_: tauri::AppHandle, _path: String) -> Result<(), String> { Ok(()) }
+fn set_db_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("db_path.txt"), path.trim()).map_err(|e| e.to_string())
+}
 
 fn read_db_path(app: &tauri::AppHandle) -> String {
     let dir = app.path().app_config_dir().unwrap_or_default();
-    std::fs::read_to_string(dir.join("db_path.txt")).unwrap_or_default()
+    std::fs::read_to_string(dir.join("db_path.txt"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Resolve the DB path to inject via DB_PATH. Precedence:

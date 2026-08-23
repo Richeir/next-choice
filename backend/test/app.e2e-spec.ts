@@ -116,7 +116,11 @@ describe('Backend e2e (Issue #6)', () => {
     expect(res.body.stockCnt).toBe(2);
     expect(res.body.etfCnt).toBe(1);
     expect(res.body.analyzedCnt).toBe(2);
+    // 两条分析都属于股票，ETF 没有：合计值不能用来算 ETF 覆盖率
+    expect(res.body.stockAnalyzedCnt).toBe(2);
+    expect(res.body.etfAnalyzedCnt).toBe(0);
     expect(res.body.analyzedTimes).toBe(2);
+    expect(res.body.lastTradeDate).toBe('2024-01-31');
   });
 
   it('GET /api/stocks 返回分页列表与最新分析摘要', async () => {
@@ -145,6 +149,31 @@ describe('Backend e2e (Issue #6)', () => {
     const res = await request(app.getHttpServer()).get('/api/stocks?market=SH').expect(200);
     expect(res.body.total).toBe(1);
     expect(res.body.items[0].code).toBe('sh.600000');
+  });
+
+  it('GET /api/stocks?analysisStatus= 按分析状态过滤，total 与结果一致', async () => {
+    const analyzed = await request(app.getHttpServer())
+      .get('/api/stocks?analysisStatus=analyzed')
+      .expect(200);
+    expect(analyzed.body.total).toBe(2);
+    expect(analyzed.body.items).toHaveLength(2);
+
+    const pending = await request(app.getHttpServer())
+      .get('/api/stocks?analysisStatus=pending')
+      .expect(200);
+    expect(pending.body.total).toBe(0);
+    expect(pending.body.items).toHaveLength(0);
+
+    // ETF 没有分析记录，pending 应命中唯一一只
+    const etfPending = await request(app.getHttpServer())
+      .get('/api/etfs?analysisStatus=pending')
+      .expect(200);
+    expect(etfPending.body.total).toBe(1);
+    expect(etfPending.body.items[0].code).toBe('sh.510010');
+  });
+
+  it('GET /api/stocks?analysisStatus=bogus 非法值返回 400', async () => {
+    await request(app.getHttpServer()).get('/api/stocks?analysisStatus=bogus').expect(400);
   });
 
   it('GET /api/stocks/sh.600000 返回详情', async () => {

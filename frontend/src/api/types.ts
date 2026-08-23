@@ -3,8 +3,13 @@
 export interface Stats {
   stockCnt: number;
   etfCnt: number;
+  /** 股票 + ETF 合计；分品种占比请用 stockAnalyzedCnt / etfAnalyzedCnt */
   analyzedCnt: number;
+  stockAnalyzedCnt: number;
+  etfAnalyzedCnt: number;
   analyzedTimes: number;
+  /** 全库最新交易日（顶栏“数据日期”） */
+  lastTradeDate: string | null;
 }
 
 export interface AnalysisSummary {

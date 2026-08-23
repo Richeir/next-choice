@@ -49,8 +49,8 @@
 - 底部进度条：蓝色，宽度 = 已分析/总数
 
 ### 数据来源
-- `GET /api/stats` → 返回 `stockCnt`、`etfCnt`、`analyzedCnt`、`analyzedTimes`
-- 前端计算百分比 = 已分析数 / 总数
+- `GET /api/stats` → 返回 `stockCnt`、`etfCnt`、`analyzedCnt`、`stockAnalyzedCnt`、`etfAnalyzedCnt`、`analyzedTimes`、`lastTradeDate`
+- 前端计算百分比 = 该品种已分析数 / 该品种总数（股票用 `stockAnalyzedCnt`，ETF 用 `etfAnalyzedCnt`）
 
 ---
 

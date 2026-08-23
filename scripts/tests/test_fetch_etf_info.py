@@ -75,3 +75,47 @@ class TestFetchEtfInfo:
         monkeypatch.setattr(fetch_data.src, "stock_quote", quote)
         n_ok, n_fail = fetch_data.fetch_etf_info(conn, sleep_s=0)
         assert (n_ok, n_fail) == (1, 1)
+
+
+class TestAttemptCap:
+    """数据源本就没有该字段的证券不能每轮都重扫一遍。"""
+
+    def test_stops_retrying_after_cap(self, conn, monkeypatch):
+        calls = []
+
+        def no_52w(code, **kw):
+            calls.append(code)
+            return {"pb": None, "high_52w": None, "low_52w": None}
+        monkeypatch.setattr(fetch_data.src, "stock_quote", no_52w)
+
+        for _ in range(fetch_data.MAX_INFO_ATTEMPTS):
+            fetch_data.fetch_etf_info(conn, sleep_s=0)
+        assert len(calls) == fetch_data.MAX_INFO_ATTEMPTS
+
+        # 达到上限后不再请求
+        calls.clear()
+        n_ok, n_fail = fetch_data.fetch_etf_info(conn, sleep_s=0)
+        assert calls == [] and (n_ok, n_fail) == (0, 0)
+
+        # --force 仍可重试
+        n_ok, _ = fetch_data.fetch_etf_info(conn, sleep_s=0, force=True)
+        assert calls == ["510050"] and n_ok == 1
+
+    def test_success_clears_counter(self, conn, monkeypatch):
+        monkeypatch.setattr(fetch_data.src, "stock_quote",
+                            lambda code, **kw: {"pb": None, "high_52w": None,
+                                                "low_52w": None})
+        fetch_data.fetch_etf_info(conn, sleep_s=0)
+        assert db.backfill_attempts(conn, "etf") == {"510050": 1}
+
+        monkeypatch.setattr(fetch_data.src, "stock_quote",
+                            lambda code, **kw: {"pb": None, "high_52w": 3.2,
+                                                "low_52w": 2.8})
+        fetch_data.fetch_etf_info(conn, sleep_s=0)
+        assert db.backfill_attempts(conn, "etf") == {}
+
+    def test_network_failure_also_counts(self, conn, monkeypatch):
+        monkeypatch.setattr(fetch_data.src, "stock_quote",
+                            lambda code, **kw: None)
+        fetch_data.fetch_etf_info(conn, sleep_s=0)
+        assert db.backfill_attempts(conn, "etf") == {"510050": 1}

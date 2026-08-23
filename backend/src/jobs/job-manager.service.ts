@@ -43,6 +43,8 @@ export class JobManagerService {
   private readonly logger = new Logger(JobManagerService.name);
   private readonly jobs = new Map<string, Job>();
   private readonly waiters: Array<() => void> = [];
+  /** 已排入执行的 job id：run() 对同一 id 幂等，重复触发不会把任务跑两遍。 */
+  private readonly scheduled = new Set<string>();
   private running = 0;
 
   constructor(
@@ -87,10 +89,16 @@ export class JobManagerService {
     return job;
   }
 
-  /** 异步执行任务：并发受限（信号量），running → done / failed。 */
+  /**
+   * 异步执行任务：并发受限（信号量），pending → running → done / failed。
+   * 对同一 id 幂等：排队中的任务仍是 pending，调用方无法靠状态判断是否已排过队。
+   */
   async run(id: string, task: () => Promise<unknown>): Promise<void> {
-    this.update(id, { status: 'running', result: null });
+    if (this.scheduled.has(id)) return;
+    this.scheduled.add(id);
+    // 先排队再置 running：在信号量前置 running 会让排队中的任务对外显示“运行中”
     await this.acquire();
+    this.update(id, { status: 'running', result: null });
     try {
       const result = await task();
       this.update(id, { status: 'done', result });
@@ -98,6 +106,7 @@ export class JobManagerService {
       const message = err instanceof Error ? err.message : String(err);
       this.update(id, { status: 'failed', error: message });
     } finally {
+      this.scheduled.delete(id);
       this.release();
     }
   }

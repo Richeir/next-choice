@@ -1,18 +1,17 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { BANNER_TEXT, FALLBACK_DATA_DATE } from '../config';
-import { getStocks } from '../api';
+import { getStats } from '../api';
 
 function useDataDate(): string {
   const [date, setDate] = useState<string>(FALLBACK_DATA_DATE);
   useEffect(() => {
     let alive = true;
-    getStocks({ page: 1, pageSize: 1, sortBy: 'lastTradeDate', order: 'desc' })
-      .then((res) => {
-        if (alive) {
-          const d = res.items[0]?.lastTradeDate;
-          if (d) setDate(d);
-        }
+    // 直接取 stats 的 lastTradeDate：早先借 getStocks 排序取第一条既多一次
+    // 请求，又依赖 sortBy=lastTradeDate 恰好被后端支持
+    getStats()
+      .then((s) => {
+        if (alive && s.lastTradeDate) setDate(s.lastTradeDate);
       })
       .catch(() => {
         /* 取不到时保留兜底值 */

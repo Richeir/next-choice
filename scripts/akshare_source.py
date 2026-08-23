@@ -4,7 +4,9 @@
 - 东财（*_em）系接口在当前网络不可用，本模块只用腾讯/新浪/雪球/同花顺源
 - 新浪不支持 ETF 复权；雪球个股接口需逐只调用
 """
+import json
 import logging
+import random
 import time
 
 import akshare as ak
@@ -14,6 +16,16 @@ import requests
 from transform import market_of
 
 log = logging.getLogger(__name__)
+
+# 可重试的异常：上游限流未必以 HTTP 错误出现——返回空体或异常结构时，
+# akshare 的解析会抛 JSONDecodeError / KeyError / IndexError，这些同样是
+# “重试一次多半就好”的瞬时故障，不该直接记 fail 丢掉这只证券。
+_RETRYABLE = (
+    requests.exceptions.RequestException,
+    json.JSONDecodeError,  # ValueError 子类
+    KeyError,
+    IndexError,
+)
 
 
 def to_sina_code(code):
@@ -42,20 +54,23 @@ def wan_to_yuan(v):
 
 
 def fetch_with_retry(fn, *args, max_retries=3, base_delay=1.0, sleep=time.sleep,
+                     jitter=random.random,
                      **kwargs):
-    """调用 fn，网络异常（requests.RequestException）指数退避重试；
-    其他异常直接抛出。退避时长：base_delay * 4**attempt（1s/4s/16s...）。"""
+    """调用 fn，瞬时故障（见 _RETRYABLE）指数退避重试；其他异常直接抛出。
+
+    退避时长 base_delay * 4**attempt，再乘 1 + 0.5*jitter() 的随机抖动，
+    避免全市场循环里成千上万只证券齐步重试、把限流放大。"""
     last = None
     for attempt in range(max_retries + 1):
         try:
             return fn(*args, **kwargs)
-        except requests.exceptions.RequestException as e:
+        except _RETRYABLE as e:
             last = e
             if attempt >= max_retries:
                 break
-            delay = base_delay * (4 ** attempt)
-            log.warning("retry %d/%d after %ss: %s", attempt + 1,
-                        max_retries, delay, e)
+            delay = base_delay * (4 ** attempt) * (1 + 0.5 * jitter())
+            log.warning("retry %d/%d after %.2fs: %s: %s", attempt + 1,
+                        max_retries, delay, type(e).__name__, e)
             sleep(delay)
     raise last
 

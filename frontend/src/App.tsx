@@ -4,6 +4,7 @@ import HomePage from './pages/HomePage';
 import StocksPage from './pages/StocksPage';
 import EtfsPage from './pages/EtfsPage';
 import DetailPage from './pages/DetailPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 export default function App() {
   return (
@@ -14,7 +15,7 @@ export default function App() {
         <Route path="/etfs" element={<EtfsPage />} />
         <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
         <Route path="/etfs/:code" element={<DetailPage kind="etf" />} />
-        <Route path="*" element={<HomePage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Layout>
   );

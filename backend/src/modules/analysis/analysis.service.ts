@@ -34,9 +34,8 @@ export class AnalysisService {
       throw new NotFoundException(`${type} ${code} not found`);
     }
     const job = this.jobs.create(type, code);
-    if (job.status === 'pending') {
-      void this.jobs.run(job.id, () => this.execute(type, code));
-    }
+    // run() 自身对 job id 幂等：复用已有任务时不会重复执行（排队中的任务仍是 pending）
+    void this.jobs.run(job.id, () => this.execute(type, code));
     return { accepted: true, jobId: job.id };
   }
 

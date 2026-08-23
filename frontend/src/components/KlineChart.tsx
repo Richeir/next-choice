@@ -1,7 +1,27 @@
 import { useEffect, useRef } from 'react';
-import * as echarts from 'echarts';
+// 按需注册：全量 `import * as echarts` 会把整包（约 1MB）打进产物
+import * as echarts from 'echarts/core';
+import { BarChart, LineChart } from 'echarts/charts';
+import {
+  AxisPointerComponent,
+  GridComponent,
+  MarkPointComponent,
+  TooltipComponent,
+} from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import type { ECharts } from 'echarts/core';
 import type { KlineItem } from '../api/types';
 import { movingAverage } from '../utils/format';
+
+echarts.use([
+  LineChart,
+  BarChart,
+  GridComponent,
+  TooltipComponent,
+  AxisPointerComponent,
+  MarkPointComponent,
+  CanvasRenderer,
+]);
 
 const UP = '#16a34a'; // 涨 = 绿（以设计图为准）
 const DOWN = '#dc2626'; // 跌 = 红
@@ -16,7 +36,7 @@ interface Props {
 /** 收盘价面积图 + MA20/MA60 均线 + 底部成交量柱（红跌绿涨） */
 export default function KlineChart({ data }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useRef<ECharts | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -89,10 +109,18 @@ export default function KlineChart({ data }: Props) {
           showSymbol: false,
           lineStyle: { color: BLUE, width: 2 },
           areaStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(37,99,235,0.35)' },
-              { offset: 1, color: 'rgba(37,99,235,0.03)' },
-            ]),
+            // 用声明式渐变，免得为 graphic.LinearGradient 再引一块 echarts
+            color: {
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(37,99,235,0.35)' },
+                { offset: 1, color: 'rgba(37,99,235,0.03)' },
+              ],
+            },
           },
           markPoint: {
             symbol: 'rect',

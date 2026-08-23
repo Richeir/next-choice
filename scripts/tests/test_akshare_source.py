@@ -1,4 +1,6 @@
 """akshare_source 数据源层单元测试（网络调用全部 mock）。"""
+import json
+
 import pytest
 import requests
 
@@ -49,9 +51,20 @@ class TestRetry:
             return "ok"
         delays = []
         r = src.fetch_with_retry(fn, max_retries=3, base_delay=1.0,
-                                 sleep=delays.append)
+                                 sleep=delays.append, jitter=lambda: 0.0)
         assert r == "ok" and len(calls) == 3
         assert delays == [1.0, 4.0]
+
+    def test_backoff_has_jitter(self):
+        """齐步重试会把限流放大，退避需带随机抖动。"""
+        def fn():
+            raise requests.exceptions.ConnectionError("boom")
+        delays = []
+        with pytest.raises(requests.exceptions.ConnectionError):
+            src.fetch_with_retry(fn, max_retries=2, base_delay=1.0,
+                                 sleep=delays.append, jitter=lambda: 1.0)
+        # 抖动上限 +50%
+        assert delays == [1.5, 6.0]
 
     def test_exhausted_raises(self):
         def fn():
@@ -59,13 +72,31 @@ class TestRetry:
         with pytest.raises(requests.exceptions.ConnectionError):
             src.fetch_with_retry(fn, max_retries=2, sleep=lambda s: None)
 
-    def test_non_network_error_not_retried(self):
+    @pytest.mark.parametrize("exc", [
+        KeyError("data"),
+        IndexError("list index out of range"),
+        json.JSONDecodeError("Expecting value", "", 0),
+    ])
+    def test_upstream_throttle_shapes_are_retried(self, exc):
+        """限流常表现为解析异常而非 HTTP 错误，这些也要重试。"""
         calls = []
 
         def fn():
             calls.append(1)
-            raise KeyError("data")
-        with pytest.raises(KeyError):
+            if len(calls) < 3:
+                raise exc
+            return "ok"
+        assert src.fetch_with_retry(fn, max_retries=3, sleep=lambda s: None,
+                                    jitter=lambda: 0.0) == "ok"
+        assert len(calls) == 3
+
+    def test_programming_error_not_retried(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise TypeError("bad call")
+        with pytest.raises(TypeError):
             src.fetch_with_retry(fn, max_retries=3, sleep=lambda s: None)
         assert len(calls) == 1
 

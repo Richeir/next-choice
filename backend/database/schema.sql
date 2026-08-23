@@ -1,5 +1,5 @@
 -- next-choice SQLite 数据库 schema
--- 与 doc/db-design.md 保持一致（11 张表：基础信息 2 / K线 6 / 分析 2 / 辅助 1）
+-- 与 doc/db-design.md 保持一致（14 张表：基础信息 2 / K线 6 / 分析 2 / 辅助 4）
 -- 由 scripts/db.py 读取执行建表，未来 Nest.js 后端复用同一文件，避免 SQL 漂移。
 
 PRAGMA journal_mode = WAL;
@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_daily (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_daily_date ON stock_kline_daily(date);
-CREATE INDEX IF NOT EXISTS idx_stock_daily_codedate ON stock_kline_daily(code, date);
 
 CREATE TABLE IF NOT EXISTS stock_kline_weekly (
     date        TEXT NOT NULL,
@@ -85,7 +84,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_weekly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_weekly_date ON stock_kline_weekly(date);
-CREATE INDEX IF NOT EXISTS idx_stock_weekly_codedate ON stock_kline_weekly(code, date);
 
 CREATE TABLE IF NOT EXISTS stock_kline_monthly (
     date        TEXT NOT NULL,
@@ -102,7 +100,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_monthly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_monthly_date ON stock_kline_monthly(date);
-CREATE INDEX IF NOT EXISTS idx_stock_monthly_codedate ON stock_kline_monthly(code, date);
 
 CREATE TABLE IF NOT EXISTS etf_kline_daily (
     date        TEXT NOT NULL,
@@ -126,7 +123,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_daily (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_daily_date ON etf_kline_daily(date);
-CREATE INDEX IF NOT EXISTS idx_etf_daily_codedate ON etf_kline_daily(code, date);
 
 CREATE TABLE IF NOT EXISTS etf_kline_weekly (
     date        TEXT NOT NULL,
@@ -143,7 +139,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_weekly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_weekly_date ON etf_kline_weekly(date);
-CREATE INDEX IF NOT EXISTS idx_etf_weekly_codedate ON etf_kline_weekly(code, date);
 
 CREATE TABLE IF NOT EXISTS etf_kline_monthly (
     date        TEXT NOT NULL,
@@ -160,7 +155,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_monthly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_monthly_date ON etf_kline_monthly(date);
-CREATE INDEX IF NOT EXISTS idx_etf_monthly_codedate ON etf_kline_monthly(code, date);
 
 -- ============ 分析结果 ============
 
@@ -213,7 +207,6 @@ CREATE TABLE IF NOT EXISTS etf_analysis (
 CREATE INDEX IF NOT EXISTS idx_etf_analysis_date ON etf_analysis(date);
 
 -- ============ 辅助 ============
-
 CREATE TABLE IF NOT EXISTS adjust_factor (
     code             TEXT NOT NULL,
     date             TEXT NOT NULL,   -- 除权日期
@@ -230,6 +223,17 @@ CREATE TABLE IF NOT EXISTS analysis_config (
     updated_at TEXT
 );
 
+-- info 补齐尝试计数：数据源本就没有某只证券的字段时（雪球对部分标的
+-- 不返回 52 周高低/全称），不计数就会每轮全量重试。达到上限的证券在
+-- --fetch-stock-info / --fetch-etf-info 中跳过，--force 可忽略上限。
+CREATE TABLE IF NOT EXISTS info_backfill_attempts (
+    kind         TEXT NOT NULL,           -- 'stock' | 'etf'
+    code         TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_attempt TEXT,                    -- 最近一次尝试日期
+    PRIMARY KEY (kind, code)
+);
+
 -- 分析任务（JobManagerService 落库，进程重启后仍可查询/恢复）。
 CREATE TABLE IF NOT EXISTS analysis_jobs (
     id         TEXT PRIMARY KEY,
@@ -242,3 +246,14 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
     updated_at TEXT NOT NULL            -- 最近更新时间（ISO 8601）
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_code ON analysis_jobs(kind, code, status);
+
+-- ============ 索引清理 ============
+-- 主键 (code, date, adjustflag) 的自动索引，其 (code, date) 前缀已覆盖
+-- 这些索引原本服务的查询，留着只是给全库最大的 6 张 K 线表白付写放大。
+-- 建表用 IF NOT EXISTS，旧库不会自动少掉索引，故在此显式 DROP（幂等）。
+DROP INDEX IF EXISTS idx_stock_daily_codedate;
+DROP INDEX IF EXISTS idx_stock_weekly_codedate;
+DROP INDEX IF EXISTS idx_stock_monthly_codedate;
+DROP INDEX IF EXISTS idx_etf_daily_codedate;
+DROP INDEX IF EXISTS idx_etf_weekly_codedate;
+DROP INDEX IF EXISTS idx_etf_monthly_codedate;

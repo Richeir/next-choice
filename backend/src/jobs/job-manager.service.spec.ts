@@ -93,6 +93,44 @@ describe('JobManagerService', () => {
     expect(entered.length).toBe(codes.length);
   });
 
+  it('排队中的任务保持 pending，拿到信号量后才是 running', async () => {
+    const db = createDb();
+    const service = new JobManagerService(db);
+    const blockers: Array<() => void> = [];
+    const codes = ['c1', 'c2', 'c3', 'c4', 'c5'];
+    const jobs = codes.map((code) => service.create('stock', code));
+    let started = 0;
+    const runs = jobs.map((job) =>
+      service.run(job.id, async () => {
+        started += 1;
+        // 只阻塞占满信号量的前 MAX_CONCURRENT 个，其余放行以便收尾
+        if (started <= MAX_CONCURRENT) {
+          await new Promise<void>((resolve) => blockers.push(resolve));
+        }
+      }),
+    );
+    await waitFor(() => expect(blockers.length).toBe(MAX_CONCURRENT));
+
+    const statuses = jobs.map((j) => service.get(j.id)!.status);
+    expect(statuses.filter((s) => s === 'running')).toHaveLength(MAX_CONCURRENT);
+    expect(statuses.filter((s) => s === 'pending')).toHaveLength(
+      codes.length - MAX_CONCURRENT,
+    );
+
+    while (blockers.length) blockers.shift()!();
+    await Promise.all(runs);
+  });
+
+  it('对同一 job id 重复 run 只执行一次任务', async () => {
+    const db = createDb();
+    const service = new JobManagerService(db);
+    const job = service.create('stock', '600000');
+    const task = jest.fn(async () => 'ok');
+    await Promise.all([service.run(job.id, task), service.run(job.id, task)]);
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(service.get(job.id)!.status).toBe('done');
+  });
+
   it('任务失败时记录错误并可查询', async () => {
     const db = createDb();
     const service = new JobManagerService(db);

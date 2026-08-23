@@ -110,6 +110,31 @@ def kline_max_date(conn, kind, freq):
     return {r["code"]: r["d"] for r in rows}
 
 
+def backfill_attempts(conn, kind):
+    """返回 {code: attempts}：info 补齐已尝试但没补到字段的次数。"""
+    rows = conn.execute(
+        "SELECT code, attempts FROM info_backfill_attempts WHERE kind=?",
+        (kind,))
+    return {r["code"]: r["attempts"] for r in rows}
+
+
+def record_backfill_attempt(conn, kind, code, date_str):
+    """记一次"没补到字段"的尝试（计数 +1）。"""
+    conn.execute(
+        "INSERT INTO info_backfill_attempts (kind, code, attempts,"
+        " last_attempt) VALUES (?,?,1,?)"
+        " ON CONFLICT(kind, code) DO UPDATE SET"
+        " attempts=attempts+1, last_attempt=excluded.last_attempt",
+        (kind, code, date_str))
+    conn.commit()
+
+
+def clear_backfill_attempts(conn, kind, code):
+    """补到字段后清除计数（下次若又变空可重新累计）。"""
+    conn.execute("DELETE FROM info_backfill_attempts WHERE kind=? AND code=?",
+                 (kind, code))
+
+
 def _kline_columns(kind, freq):
     try:
         return _TABLE_COLS[(kind, freq)]
@@ -127,6 +152,9 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
     除 _PROTECT_NULL_COLS 外的列直接覆盖；_PROTECT_NULL_COLS 用
     COALESCE 保留库中已有值——抓取窗口首行的 preclose/pctChg 依赖窗口
     前一根数据，缺失时宁可保留旧值也不能静默打成 NULL。
+
+    整批走一次 executemany；行数校验在组装阶段完成，任何一行列数不符
+    都在写库前抛错，不会出现写一半的情况。
     """
     columns = _kline_columns(kind, freq)
     table = kline_table(kind, freq)
@@ -144,6 +172,7 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
         f"ON CONFLICT(code, date, adjustflag) DO UPDATE SET {','.join(updates)}"
     )
     adj_idx = columns.index("adjustflag")
+    payload = []
     for row in rows:
         if len(row) != len(columns):
             raise ValueError(
@@ -151,6 +180,9 @@ def insert_kline(conn, kind, freq, adjustflag, rows):
             )
         # 落库记录请求的复权方式，不信任数据源返回的 adjustflag 列。
         row[adj_idx] = adjustflag
-        vals = [v if c in _RAW_COLS else to_float(v) for c, v in zip(columns, row)]
-        conn.execute(sql, vals)
+        payload.append(
+            [v if c in _RAW_COLS else to_float(v) for c, v in zip(columns, row)]
+        )
+    # executemany 让整批共用一次语句准备，比逐行 execute 快一个量级
+    conn.executemany(sql, payload)
     conn.commit()

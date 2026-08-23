@@ -24,8 +24,8 @@ class TestUpdateStockList:
     def test_writes_all_fields(self, conn, monkeypatch):
         monkeypatch.setattr(fetch_data.src, "list_stocks",
                             lambda **kw: _stocks())
-        n_ok, n_fail = fetch_data.update_stock_list(conn)
-        assert (n_ok, n_fail) == (2, 0)
+        n_ok, n_skip, n_delisted = fetch_data.update_stock_list(conn)
+        assert (n_ok, n_skip, n_delisted) == (2, 0, 0)
         row = conn.execute(
             "SELECT * FROM stock_info WHERE code='600000'").fetchone()
         assert row["code_name"] == "浦发银行"
@@ -74,8 +74,57 @@ class TestUpdateStockList:
                              "last_amount": 1.0}]
         monkeypatch.setattr(fetch_data.src, "list_stocks",
                             lambda **kw: rows)
-        n_ok, n_skip = fetch_data.update_stock_list(conn)
+        n_ok, n_skip, _ = fetch_data.update_stock_list(conn)
         assert (n_ok, n_skip) == (2, 1)
         assert conn.execute(
             "SELECT count(*) c FROM stock_info WHERE code='920045'"
         ).fetchone()["c"] == 0
+
+
+class TestDelisting:
+    """列表里缺席即已摘牌：不标记的话增量的 delisted 跳过永不命中。"""
+
+    def _seed_live(self, conn, code, name="退市样本"):
+        conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                     " status) VALUES (?,?,'SH','1','1')", (code, name))
+        conn.commit()
+
+    def test_absent_code_marked_delisted(self, conn, monkeypatch):
+        self._seed_live(conn, "600999")
+        monkeypatch.setattr(fetch_data.src, "list_stocks",
+                            lambda **kw: _stocks())
+        n_ok, _, n_delisted = fetch_data.update_stock_list(conn)
+        assert n_ok == 2 and n_delisted == 1
+        row = conn.execute("SELECT status, outDate FROM stock_info"
+                           " WHERE code='600999'").fetchone()
+        assert row["status"] == "0"
+        assert row["outDate"] is not None
+        # 在列表里的保持在市
+        assert conn.execute("SELECT status FROM stock_info WHERE"
+                            " code='600000'").fetchone()["status"] == "1"
+
+    def test_skipped_segment_not_treated_as_delisted(self, conn, monkeypatch):
+        """未知号段不入库但仍在交易，不能因为“库里没有”反过来误伤已有行。"""
+        conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                     " status) VALUES ('920045','北交所样本','SH','1','1')")
+        conn.commit()
+        rows = _stocks() + [{"code": "920045", "name": "北交所样本",
+                             "pe_ttm": None, "total_market_cap": None,
+                             "last_close": 1.0, "last_pct_chg": 0.0,
+                             "last_amount": 1.0}]
+        monkeypatch.setattr(fetch_data.src, "list_stocks", lambda **kw: rows)
+        _, _, n_delisted = fetch_data.update_stock_list(conn)
+        assert n_delisted == 0
+        assert conn.execute("SELECT status FROM stock_info WHERE"
+                            " code='920045'").fetchone()["status"] == "1"
+
+    def test_truncated_response_skips_sweep(self, conn, monkeypatch):
+        """响应残缺时宁可不标记，也不能把全市场打成退市。"""
+        for i in range(20):
+            self._seed_live(conn, f"6009{i:02d}")
+        monkeypatch.setattr(fetch_data.src, "list_stocks",
+                            lambda **kw: _stocks()[:1])
+        _, _, n_delisted = fetch_data.update_stock_list(conn)
+        assert n_delisted == 0
+        assert conn.execute("SELECT count(*) c FROM stock_info WHERE"
+                            " status='0'").fetchone()["c"] == 0

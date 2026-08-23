@@ -9,6 +9,7 @@ class TestMarketOf:
         ("600000", "SH"), ("601398", "SH"), ("688981", "SH"),
         ("000001", "SZ"), ("300750", "SZ"), ("002594", "SZ"),
         ("510050", "SH"), ("560010", "SH"), ("588000", "SH"),
+        ("520930", "SH"), ("530180", "SH"), ("551500", "SH"),
         ("159915", "SZ"), ("161725", "SZ"),
     ])
     def test_market_by_code_segment(self, code, market):
@@ -23,6 +24,7 @@ class TestMarketOf:
 
 class TestIsEtfCode:
     @pytest.mark.parametrize("code", ["510050", "560010", "588000",
+                                      "520930", "530180", "551500",
                                       "159915", "161725"])
     def test_etf_segments(self, code):
         assert is_etf_code(code) is True

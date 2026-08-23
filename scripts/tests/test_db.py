@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "adjust_factor",
     "analysis_config",
     "analysis_jobs",
+    "info_backfill_attempts",
 }
 
 

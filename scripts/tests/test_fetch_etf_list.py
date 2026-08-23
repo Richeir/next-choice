@@ -22,8 +22,8 @@ class TestUpdateEtfList:
                             {"510050": {"fund_scale": 5.0e10,
                                         "manager": "柳军",
                                         "ipo_date": "2004-12-30"}})
-        n_ok, n_fail = fetch_data.update_etf_list(conn)
-        assert (n_ok, n_fail) == (2, 0)
+        n_ok, n_fail, n_delisted = fetch_data.update_etf_list(conn)
+        assert (n_ok, n_fail, n_delisted) == (2, 0, 0)
         row = conn.execute(
             "SELECT * FROM etf_info WHERE code='510050'").fetchone()
         assert row["market"] == "SH" and row["type"] == "5"

@@ -192,6 +192,72 @@ class TestOverlapPreclose:
             [("2024-01-05", 10.7)]
 
 
+class TestSingleFetchPerAdjust:
+    """周/月由日线本地派生，多频率不得对同一 code 重复请求日 K。"""
+
+    def _seed(self, tmp_path, name="t.db"):
+        conn = db.init_db(str(tmp_path / name), SCHEMA)
+        conn.execute("INSERT INTO stock_info (code, code_name, market, type,"
+                     " status) VALUES ('600000','浦发银行','SH','1','1')")
+        conn.commit()
+        return conn
+
+    def _daily(self):
+        return _df([
+            ("2024-01-02", 10.0, 10.5, 10, 10.2, 10.0, 100, 1e3, None, 2.0),
+            ("2024-01-03", 10.2, 10.5, 10.1, 10.4, 10.2, 100, 1e3, None, 1.96),
+            ("2024-01-04", 10.4, 10.6, 10.3, 10.5, 10.4, 100, 1e3, None, 0.96),
+            ("2024-01-05", 10.5, 10.8, 10.4, 10.7, 10.5, 100, 1e3, None, 1.90),
+        ])
+
+    def test_three_freqs_one_request_per_adjust(self, tmp_path, monkeypatch):
+        conn = self._seed(tmp_path)
+        calls = []
+
+        def fake(code, start, end, adjust="", max_retries=3):
+            calls.append((code, adjust, start))
+            return self._daily()
+        monkeypatch.setattr(fetch_data.src, "stock_kline", fake)
+
+        fetch_data.fetch_stock_kline(
+            conn, ["daily", "weekly", "monthly"], ["2", "3"],
+            "2024-01-01", "2024-01-31", today="2024-01-08", sleep_s=0)
+
+        # 3 频率 × 2 复权原本要 6 次请求，现在每档复权只抓一次日线
+        assert len(calls) == 2
+        assert sorted(c[1] for c in calls) == ["", "qfq"]
+        # 三张表都写到了
+        for table in ("stock_kline_daily", "stock_kline_weekly",
+                      "stock_kline_monthly"):
+            n = conn.execute(f"SELECT count(*) c FROM {table}").fetchone()["c"]
+            assert n > 0, table
+
+    def test_derived_rows_match_per_freq_fetch(self, tmp_path, monkeypatch):
+        """派生结果与逐频率单独抓取一致。"""
+        conn = self._seed(tmp_path)
+        monkeypatch.setattr(fetch_data.src, "stock_kline",
+                            lambda *a, **kw: self._daily())
+        fetch_data.fetch_stock_kline(conn, ["daily", "weekly", "monthly"],
+                                     ["3"], "2024-01-01", "2024-01-31",
+                                     today="2024-01-08", sleep_s=0)
+        combined = {
+            t: conn.execute(f"SELECT date, open, high, low, close, volume"
+                            f" FROM {t} ORDER BY date").fetchall()
+            for t in ("stock_kline_daily", "stock_kline_weekly",
+                      "stock_kline_monthly")}
+
+        conn2 = self._seed(tmp_path, "separate.db")
+        for freq in ("daily", "weekly", "monthly"):
+            fetch_data.fetch_stock_kline(conn2, [freq], ["3"], "2024-01-01",
+                                         "2024-01-31", force=True,
+                                         today="2024-01-08", sleep_s=0)
+        for table, rows in combined.items():
+            other = conn2.execute(
+                f"SELECT date, open, high, low, close, volume FROM {table}"
+                " ORDER BY date").fetchall()
+            assert [tuple(r) for r in rows] == [tuple(r) for r in other], table
+
+
 class TestQfqIncrementalFullRefresh:
     """前复权增量必须全量重刷（复权基准在除权后整体平移，增量会混用基准）。"""
 

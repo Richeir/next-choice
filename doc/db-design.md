@@ -27,7 +27,7 @@
 
 ## 3. 表清单
 
-共 **11 张表**，按用途分四类：**基础信息（2 张）**、**K 线数据（6 张）**、**分析结果（2 张）**、**辅助（1 张）**。
+共 **14 张表**，按用途分四类：**基础信息（2 张）**、**K 线数据（6 张）**、**分析结果（2 张）**、**辅助（4 张：`adjust_factor` / `analysis_config` / `analysis_jobs` / `info_backfill_attempts`）**。
 
 **基础信息：**
 
@@ -172,7 +172,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_daily (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_daily_date ON stock_kline_daily(date);
-CREATE INDEX IF NOT EXISTS idx_stock_daily_codedate ON stock_kline_daily(code, date);
 ```
 
 ### 5.2 股票周 K `stock_kline_weekly`
@@ -195,7 +194,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_weekly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_weekly_date ON stock_kline_weekly(date);
-CREATE INDEX IF NOT EXISTS idx_stock_weekly_codedate ON stock_kline_weekly(code, date);
 ```
 
 ### 5.3 股票月 K `stock_kline_monthly`
@@ -216,7 +214,6 @@ CREATE TABLE IF NOT EXISTS stock_kline_monthly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_monthly_date ON stock_kline_monthly(date);
-CREATE INDEX IF NOT EXISTS idx_stock_monthly_codedate ON stock_kline_monthly(code, date);
 ```
 
 ### 5.4 ETF 日 K `etf_kline_daily`
@@ -246,7 +243,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_daily (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_daily_date ON etf_kline_daily(date);
-CREATE INDEX IF NOT EXISTS idx_etf_daily_codedate ON etf_kline_daily(code, date);
 ```
 
 ### 5.5 ETF 周 K `etf_kline_weekly`
@@ -267,7 +263,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_weekly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_weekly_date ON etf_kline_weekly(date);
-CREATE INDEX IF NOT EXISTS idx_etf_weekly_codedate ON etf_kline_weekly(code, date);
 ```
 
 ### 5.6 ETF 月 K `etf_kline_monthly`
@@ -288,7 +283,6 @@ CREATE TABLE IF NOT EXISTS etf_kline_monthly (
     PRIMARY KEY (code, date, adjustflag)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_monthly_date ON etf_kline_monthly(date);
-CREATE INDEX IF NOT EXISTS idx_etf_monthly_codedate ON etf_kline_monthly(code, date);
 ```
 
 ## 6. 分析结果表（2 张）
@@ -447,7 +441,27 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_code ON analysis_jobs(kind, code, status);
 ```
 
-> 调度规则：同一标的同一时刻只允许一个 `pending` / `running` 任务（per-code 去重）；全局并发上限 3（信号量，FIFO 排队）。
+> 调度规则：同一标的同一时刻只允许一个 `pending` / `running` 任务（per-code 去重）；全局并发上限 3（信号量，FIFO 排队）。排队中的任务保持 `pending`，拿到信号量后才转 `running`。
+
+### 7.3 info 补齐尝试计数 `info_backfill_attempts`
+
+雪球对部分标的不返回全称 / 52 周高低，而 `--fetch-stock-info` / `--fetch-etf-info` 的选取条件正是"该字段为空"，不计数就会每轮把这些证券全部重扫一遍：
+
+```sql
+CREATE TABLE IF NOT EXISTS info_backfill_attempts (
+    kind         TEXT NOT NULL,           -- 'stock' | 'etf'
+    code         TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_attempt TEXT,                    -- 最近一次尝试日期
+    PRIMARY KEY (kind, code)
+);
+```
+
+> 达到 `MAX_INFO_ATTEMPTS`（默认 5）的证券在后续运行中跳过，`--force` 可忽略上限；补到字段后计数清零。
+
+### 索引说明
+
+K 线表只保留 `(date)` 索引。`(code, date)` 索引是冗余的——主键 `(code, date, adjustflag)` 的自动索引其 `(code, date)` 前缀已覆盖同样的查询，留着只是给全库最大的 6 张表白付写放大。schema.sql 末尾用 `DROP INDEX IF EXISTS` 显式清理旧库遗留的这些索引。
 
 ## 8. 常用查询示例
 

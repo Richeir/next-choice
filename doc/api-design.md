@@ -30,13 +30,16 @@
   "stockCnt": 5120,
   "etfCnt": 1419,
   "analyzedCnt": 320,
-  "analyzedTimes": 860
+  "stockAnalyzedCnt": 260,
+  "etfAnalyzedCnt": 60,
+  "analyzedTimes": 860,
+  "lastTradeDate": "2026-08-13"
 }
 ```
 
-字段对应 issue：股票数量 / ETF 数量 / 已分析数量 / 已分析次数。
+字段对应 issue：股票数量 / ETF 数量 / 已分析数量（合计与分品种）/ 已分析次数 / 全库最新交易日。
 
-> **覆盖率**：设计图首页展示的"分析覆盖率百分比"（如 90.3%）由前端计算：`股票覆盖率 = analyzedCnt / stockCnt`、`ETF 覆盖率 = analyzedCnt / etfCnt`。
+> **覆盖率**：设计图首页展示的"分析覆盖率百分比"（如 90.3%）由前端计算：`股票覆盖率 = stockAnalyzedCnt / stockCnt`、`ETF 覆盖率 = etfAnalyzedCnt / etfCnt`。`analyzedCnt` 是两者之和，只用于总量展示，不能用来算单个品种的占比。
 
 > **实现说明**：后端读取数据库实时统计（见 [db-design.md](db-design.md) §8 首页统计 SQL），并将结果**缓存**（如内存缓存 + 定时失效，例如每 10 分钟刷新），避免每次请求都全表 COUNT。缓存命中时直接返回，数据变动后按失效策略刷新。
 
@@ -53,7 +56,8 @@
 | `keyword` | string | 代码或名称模糊匹配 |
 | `industry` | string | 行业过滤（可选） |
 | `market` | string | 市场过滤：`SH` / `SZ` |
-| `status` | string | 上市状态过滤（可选） |
+| `status` | string | 上市状态过滤（可选），对应 info 表的 `status` 列 |
+| `analysisStatus` | string | 分析状态过滤：`analyzed` / `pending`。在 SQL 层过滤，`total` 与结果一致 |
 | `sortBy` | string | 排序字段，见下 |
 | `order` | string | `asc` / `desc`，默认 `desc` |
 | `page` | number | 页码，默认 1 |

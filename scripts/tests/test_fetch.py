@@ -114,3 +114,31 @@ class TestParser:
     def test_requires_command(self):
         with pytest.raises(SystemExit):
             fetch_data.build_parser().parse_args([])
+
+    def test_rejects_unknown_freq(self):
+        # 笔误留到抓取循环里才 KeyError，前面的请求配额已经白花了
+        with pytest.raises(SystemExit):
+            fetch_data.build_parser().parse_args(
+                ["--fetch-stock-kline", "--freq", "daly"])
+
+    def test_rejects_unknown_adjust(self):
+        with pytest.raises(SystemExit):
+            fetch_data.build_parser().parse_args(
+                ["--fetch-stock-kline", "--adjust", "1"])
+
+    def test_rejects_empty_freq(self):
+        with pytest.raises(SystemExit):
+            fetch_data.build_parser().parse_args(
+                ["--fetch-stock-kline", "--freq", " , "])
+
+    def test_parses_valid_lists(self):
+        ns = fetch_data.build_parser().parse_args(
+            ["--fetch-stock-kline", "--freq", "daily,weekly",
+             "--adjust", "2,3"])
+        assert ns.freq_list == ["daily", "weekly"]
+        assert ns.adjust_list == ["2", "3"]
+
+    def test_adjust_default_left_to_command(self):
+        ns = fetch_data.build_parser().parse_args(["--fetch-stock-kline"])
+        assert ns.freq_list == ["daily"]
+        assert ns.adjust_list is None

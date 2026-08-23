@@ -4,9 +4,11 @@
 
 ## 项目概览
 
-- Next.js demo 项目，含 Akshare 行情数据采集（Python）与 Nest.js 后端。
+- Vite + React（TypeScript）前端，含 Akshare 行情数据采集（Python）与 Nest.js 后端。
 - 关键目录：
   - `backend/database/schema.sql`：SQLite schema 单一来源（Python 脚本与后端共用）。
+  - `backend/`：Nest.js REST API（SQLite / better-sqlite3）。
+  - `frontend/`：Vite + React 前端（ECharts 图表、React Router）。
   - `scripts/`：数据采集脚本（Akshare -> SQLite），含 `fetch_data.py`、`akshare_source.py`、`db.py`、`transform.py`。
   - `doc/`：设计文档（架构、DB、Akshare API、LLM 分析等）。
 - 默认数据入库路径：`data/market.db`。

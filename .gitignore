@@ -51,3 +51,7 @@ frontend/vite.config.d.ts
 
 # vercel
 .vercel
+
+# tauri
+src-tauri/target/
+src-tauri/binaries/

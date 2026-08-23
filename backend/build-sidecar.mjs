@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(fileURLToPath(import.meta.url));
-const binDir = join(root, '..', 'src-tauri', 'binaries');
+const binDir = join(root, '..', 'desktop', 'binaries');
 
 // 发货守卫：pkg 会把仓库根 .env（含 LLM 密钥）快照进 sidecar 二进制，
 // 本地构建的 DMG 会携带本地 .env。发行请走 CI（全新 checkout），不要分发本地构建。
@@ -43,4 +43,4 @@ const triple = execSync('rustc --print host-tuple').toString().trim();
 const ext = process.platform === 'win32' ? '.exe' : '';
 mkdirSync(binDir, { recursive: true });
 cpSync(join(root, 'build', `backend${ext}`), join(binDir, `backend-${triple}${ext}`));
-console.log(`sidecar -> src-tauri/binaries/backend-${triple}${ext}`);
+console.log(`sidecar -> desktop/binaries/backend-${triple}${ext}`);

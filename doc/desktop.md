@@ -4,9 +4,9 @@
 
 ## 1. 概述
 
-- **壳**：Tauri 2（Rust），位于 `src-tauri/`，用系统 WebView 承载前端产物。
+- **壳**：Tauri 2（Rust），位于 `desktop/`，用系统 WebView 承载前端产物。
 - **前端**：`frontend/` 沿用 React 18 + Vite 5，构建产物 `frontend/dist` 被嵌入应用。桌面环境使用 **HashRouter**（WebView 内无服务端路由回退）。
-- **后端**：`backend/` 的 Nest.js 应用被 `@yao-pkg/pkg` 打包为单文件二进制 `src-tauri/binaries/backend-<target-triple>`，作为 Tauri `externalBin` sidecar，由 Rust 在应用启动时拉起并注入环境变量。
+- **后端**：`backend/` 的 Nest.js 应用被 `@yao-pkg/pkg` 打包为单文件二进制 `desktop/binaries/backend-<target-triple>`，作为 Tauri `externalBin` sidecar，由 Rust 在应用启动时拉起并注入环境变量。
 - **数据采集**：仍由 Python 脚本（Akshare → SQLite）离线完成，桌面端只读所选 SQLite 数据库。
 
 ## 2. 架构
@@ -45,9 +45,9 @@
 
 | 路径 | 说明 |
 |------|------|
-| `src-tauri/src/lib.rs` | Rust 壳：spawn / kill sidecar、`resolve_db_path`、`get_db_path` / `set_db_path` 命令 |
-| `src-tauri/tauri.conf.json` | bundle 配置，`externalBin: ["binaries/backend"]` |
-| `src-tauri/binaries/` | sidecar 产物目录（gitignored） |
+| `desktop/src/lib.rs` | Rust 壳：spawn / kill sidecar、`resolve_db_path`、`get_db_path` / `set_db_path` 命令 |
+| `desktop/tauri.conf.json` | bundle 配置，`externalBin: ["binaries/backend"]` |
+| `desktop/binaries/` | sidecar 产物目录（gitignored） |
 | `backend/build-sidecar.mjs` | sidecar 构建脚本：`nest build` → `pkg` → 重命名为 `backend-<triple>` |
 | `backend/package.json` | `pkg` 配置（`assets` 含 better-sqlite3 `.node` 与 `database/schema.sql`） |
 | `backend/src/database/database.service.ts` | pkg 快照内原生模块引导（复制 `.node` 到真实磁盘） |
@@ -79,7 +79,7 @@ cd backend && npm run build:sidecar
 npx --prefix frontend tauri build
 ```
 
-产物位于 `src-tauri/target/release/bundle/`（macOS 为 `.app` / `.dmg`，Windows 为 `.msi` / `.exe`）。
+产物位于 `desktop/target/release/bundle/`（macOS 为 `.app` / `.dmg`，Windows 为 `.msi` / `.exe`）。
 
 ### 4.4 CI 发布
 
@@ -133,7 +133,7 @@ npx --prefix frontend tauri build
 
 1. `nest build` 产出 `backend/dist`；
 2. `npx @yao-pkg/pkg dist/main.js` 打包为单文件（pkg target 按 host 平台/架构选择，**原生模块无法交叉编译**）；
-3. 重命名为 Tauri externalBin 约定的 `src-tauri/binaries/backend-<target-triple>`（Windows 带 `.exe`）。
+3. 重命名为 Tauri externalBin 约定的 `desktop/binaries/backend-<target-triple>`（Windows 带 `.exe`）。
 
 ### 7.2 应用打包
 
@@ -149,7 +149,7 @@ npx --prefix frontend tauri build
 
 1. **macOS DMG 打包在无 GUI 环境会失败**：`tauri build` 的 DMG 步骤会调用 create-dmg 的 Finder AppleScript 美化流程，在 headless / CI 类环境可能报 `AppleEvent timed out`（-1712）。解决：`CI=true npx --prefix frontend tauri build`（tauri CLI 会把 `CI` 传给 `bundle_dmg.sh` 跳过该步骤）。注意 tauri CLI 会误解析 `CI=1`，需用 **`CI=true`**；GitHub Actions 默认就是 `CI=true`，因此 CI 不受影响。
 2. **`.env` 会被打进 sidecar**：pkg 打包会把仓库根 `.env`（含 LLM 密钥）快照进二进制。因此**本地构建的 DMG/`.app` 内嵌本机 `.env`**，仅适合本地自测，请勿对外分发；对外分发请走 CI（全新 checkout，无 `.env`）。若修改了 `.env` 或相关环境变量，需重新 `npm run build:sidecar` 才会生效。
-3. **`tauri dev` / `tauri build` 会污染 `src-tauri/Cargo.toml`**：Tauri CLI 在 run/build 时会向依赖追加 `features = []`（功能等价，无行为差异）。提交前请 `git diff src-tauri/Cargo.toml` 检查并还原。
+3. **`tauri dev` / `tauri build` 会污染 `desktop/Cargo.toml`**：Tauri CLI 在 run/build 时会向依赖追加 `features = []`（功能等价，无行为差异）。提交前请 `git diff desktop/Cargo.toml` 检查并还原。
 4. **better-sqlite3 原生模块**：pkg 打包必须把 `.node` 放进 `pkg.assets`（`node_modules/better-sqlite3/prebuilds/*.node`）；快照内 VFS 路径无法被 `dlopen`，`database.service.ts` 顶部引导逻辑会在 `process.pkg` 下把 `.node` 复制到真实磁盘并接管 `require.resolve`。`pkg.assets` 还必须包含 `database/schema.sql`，否则 fresh DB 无法自动建表（后端启动但 11 张表全缺）。
 
 ## 9. 已知限制

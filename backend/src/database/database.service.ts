@@ -1,4 +1,42 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+// pkg 快照内原生模块无法直接 dlopen：复制到真实磁盘并接管 require.resolve。
+// 普通 node / 浏览器运行时不生效（process.pkg 不存在），不影响既有测试与部署。
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+// process.pkg 是 pkg 运行时注入的全局，标准 @types/node 没有它，用局部类型描述。
+interface PkgGlobal {
+  pkg?: { target: string };
+}
+type PkgEnv = NodeJS.Process & PkgGlobal;
+
+function ensureNativeAddon(): void {
+  const proc = process as PkgEnv;
+  if (!proc.pkg) return;
+  const Module = require('module') as {
+    _resolveFilename: (...args: unknown[]) => string;
+  };
+  // better-sqlite3 v13 用 prebuildify，原生 .node 在 prebuilds/<platform>-<arch>.node。
+  const src = path.join(
+    path.dirname(require.resolve('better-sqlite3/package.json')),
+    'prebuilds',
+    `${process.platform}-${process.arch}.node`,
+  );
+  const dst = path.join(os.tmpdir(), `better_sqlite3_${proc.pkg.target}.node`);
+  if (!fs.existsSync(dst)) {
+    // readFileSync 可读 pkg 快照；writeFileSync 落真实磁盘供 dlopen。
+    fs.writeFileSync(dst, fs.readFileSync(src));
+  }
+  const origResolve = Module._resolveFilename;
+  Module._resolveFilename = function (request: string, ...rest: unknown[]): string {
+    // 该应用唯一的原生模块就是 better-sqlite3 的 .node，命中即重定向到真实磁盘。
+    if (request.endsWith('.node')) return dst;
+    return origResolve.call(this, request, ...rest);
+  };
+}
+ensureNativeAddon();
+
 import Database from 'better-sqlite3';
 
 /** 通过依赖注入令牌访问 DatabaseService，避免模块间循环依赖。 */

@@ -10,6 +10,7 @@ import {
   getStockDetail,
 } from '../api';
 import type { AnalysisItem, EtfDetail, KlineItem, StockDetail } from '../api/types';
+import { ApiError } from '../api/client';
 import StatusTag from '../components/StatusTag';
 import RatingBadge from '../components/RatingBadge';
 import KlineChart from '../components/KlineChart';
@@ -77,15 +78,22 @@ function KlineSection({ kind, code }: { kind: Kind; code: string }) {
   const [range, setRange] = useState<string>(DEFAULT_KLINE_RANGE);
   const [kline, setKline] = useState<KlineItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const seq = useRef(0);
 
   const limit = KLINE_RANGES.find((r) => r.key === range)?.limit ?? 126;
 
   const load = useCallback(() => {
+    // 快速切换区间时慢请求可能后到，用序号丢弃过期响应
+    const id = ++seq.current;
     setError(null);
     setKline(null);
     getKline(kind, code, { limit })
-      .then(setKline)
-      .catch((e: Error) => setError(e.message));
+      .then((res) => {
+        if (id === seq.current) setKline(res);
+      })
+      .catch((e: Error) => {
+        if (id === seq.current) setError(e.message);
+      });
   }, [kind, code, limit]);
 
   useEffect(load, [load]);
@@ -128,6 +136,8 @@ function KlineSection({ kind, code }: { kind: Kind; code: string }) {
 }
 
 const POLL_INTERVAL_MS = 1500;
+/** 轮询上限：后端任务卡死时不能让按钮永远停在“分析中…” */
+const POLL_TIMEOUT_MS = 3 * 60 * 1000;
 
 export default function DetailPage({ kind }: { kind: Kind }) {
   const { code = '' } = useParams();
@@ -138,6 +148,7 @@ export default function DetailPage({ kind }: { kind: Kind }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const seq = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -146,38 +157,59 @@ export default function DetailPage({ kind }: { kind: Kind }) {
     };
   }, []);
 
+  const fetchAnalysis = useCallback(
+    () =>
+      (kind === 'stock' ? getStockAnalysis(code) : getEtfAnalysis(code))
+        .then((a) => a?.items?.[0] ?? null)
+        .catch(() => null),
+    [kind, code],
+  );
+
   const load = useCallback(() => {
+    // 切换标的时慢请求可能后到，用序号丢弃过期响应
+    const id = ++seq.current;
     setLoading(true);
     setError(null);
-    const detailReq =
-      kind === 'stock' ? getStockDetail(code) : getEtfDetail(code);
-    const analysisReq =
-      kind === 'stock' ? getStockAnalysis(code) : getEtfAnalysis(code);
-    Promise.all([detailReq, analysisReq.catch(() => null)])
+    const detailReq = kind === 'stock' ? getStockDetail(code) : getEtfDetail(code);
+    Promise.all([detailReq, fetchAnalysis()])
       .then(([d, a]) => {
+        if (id !== seq.current) return;
         setDetail(d);
-        setAnalysis(a?.items?.[0] ?? null);
+        setAnalysis(a);
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [kind, code]);
+      .catch((e: Error) => {
+        if (id === seq.current) setError(e.message);
+      })
+      .finally(() => {
+        if (id === seq.current) setLoading(false);
+      });
+  }, [kind, code, fetchAnalysis]);
 
   useEffect(load, [load]);
 
+  /** 分析完成后只刷新分析卡片：整页重载会让 K 线图重新请求并闪烁。 */
+  const reloadAnalysis = useCallback(async () => {
+    const id = seq.current;
+    const a = await fetchAnalysis();
+    if (mountedRef.current && id === seq.current) setAnalysis(a);
+  }, [fetchAnalysis]);
+
   const pollUntilDone = useCallback(
     async (jobId: string) => {
+      const deadline = Date.now() + POLL_TIMEOUT_MS;
       for (;;) {
         let job;
         try {
           job = await getJob(jobId);
         } catch (e) {
           // 仅任务不存在（404）时结束轮询；网络等其他错误交由 startAnalysis 提示
-          if (e instanceof Error && /not found/i.test(e.message)) {
-            return { notFound: true };
+          if (e instanceof ApiError && e.status === 404) {
+            return { notFound: true } as const;
           }
           throw e;
         }
         if (job.status === 'done' || job.status === 'failed') return job;
+        if (Date.now() >= deadline) return { timedOut: true } as const;
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         // 组件已卸载时停止轮询，避免泄漏请求
         if (!mountedRef.current) return null;
@@ -196,6 +228,8 @@ export default function DetailPage({ kind }: { kind: Kind }) {
         // 组件已卸载，忽略
       } else if ('notFound' in job) {
         setAnalyzeError('分析任务不存在或已失效，请重新触发分析');
+      } else if ('timedOut' in job) {
+        setAnalyzeError('分析超时未完成，请稍后刷新查看结果');
       } else if (job.status === 'failed') {
         setAnalyzeError(job.error || '分析失败，请稍后重试');
       }
@@ -205,9 +239,9 @@ export default function DetailPage({ kind }: { kind: Kind }) {
     } finally {
       if (!mountedRef.current) return;
       setAnalyzing(false);
-      load();
+      void reloadAnalysis();
     }
-  }, [kind, code, load, pollUntilDone]);
+  }, [kind, code, reloadAnalysis, pollUntilDone]);
 
   const view = useMemo(() => {
     if (!detail) return null;

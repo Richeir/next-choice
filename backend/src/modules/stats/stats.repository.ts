@@ -9,6 +9,8 @@ export interface StatsRow {
   stockAnalyzedCnt: number;
   etfAnalyzedCnt: number;
   analyzedTimes: number;
+  /** 全库最新交易日；无数据时为 null。前端顶栏“数据日期”直接用它。 */
+  lastTradeDate: string | null;
 }
 
 @Injectable()
@@ -27,7 +29,12 @@ export class StatsRepository {
            (SELECT COUNT(DISTINCT code) FROM stock_analysis) AS stock_analyzed_cnt,
            (SELECT COUNT(DISTINCT code) FROM etf_analysis) AS etf_analyzed_cnt,
            (SELECT COUNT(*) FROM stock_analysis)
-             + (SELECT COUNT(*) FROM etf_analysis) AS analyzed_times`,
+             + (SELECT COUNT(*) FROM etf_analysis) AS analyzed_times,
+           (SELECT MAX(d) FROM (
+              SELECT MAX(last_trade_date) AS d FROM stock_info
+              UNION ALL
+              SELECT MAX(last_trade_date) FROM etf_info
+            )) AS last_trade_date`,
       )
       .get() as {
       stock_cnt: number;
@@ -35,6 +42,7 @@ export class StatsRepository {
       stock_analyzed_cnt: number;
       etf_analyzed_cnt: number;
       analyzed_times: number;
+      last_trade_date: string | null;
     };
     const stockAnalyzedCnt = Number(row.stock_analyzed_cnt);
     const etfAnalyzedCnt = Number(row.etf_analyzed_cnt);
@@ -45,6 +53,7 @@ export class StatsRepository {
       stockAnalyzedCnt,
       etfAnalyzedCnt,
       analyzedTimes: Number(row.analyzed_times),
+      lastTradeDate: row.last_trade_date ?? null,
     };
   }
 }

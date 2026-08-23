@@ -120,6 +120,7 @@ describe('Backend e2e (Issue #6)', () => {
     expect(res.body.stockAnalyzedCnt).toBe(2);
     expect(res.body.etfAnalyzedCnt).toBe(0);
     expect(res.body.analyzedTimes).toBe(2);
+    expect(res.body.lastTradeDate).toBe('2024-01-31');
   });
 
   it('GET /api/stocks 返回分页列表与最新分析摘要', async () => {

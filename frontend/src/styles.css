@@ -337,7 +337,9 @@ a {
 .table-wrap {
   border: 1px solid var(--gray-200);
   border-radius: 10px;
-  overflow: hidden;
+  /* 窄屏时横向滚动而不是把右侧列裁掉 */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 table.data-table {
@@ -448,6 +450,7 @@ table.data-table {
 }
 
 .btn-view {
+  display: inline-block;
   border: 1px solid var(--gray-300);
   background: #fff;
   border-radius: 6px;
@@ -455,6 +458,7 @@ table.data-table {
   font-size: 13px;
   cursor: pointer;
   color: var(--gray-700);
+  text-decoration: none;
 }
 
 .btn-view:hover {
@@ -766,4 +770,67 @@ table.data-table {
 
 .state-view .retry {
   margin-top: 12px;
+}
+
+/* ---------- 404 ---------- */
+
+.notfound-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+/* ---------- 窄屏适配 ---------- */
+
+@media (max-width: 900px) {
+  .metrics-row {
+    /* 7 列在窄屏挤成一团，退成两列 */
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .metric-cell {
+    border-bottom: 1px solid var(--gray-200);
+  }
+}
+
+@media (max-width: 720px) {
+  .filter-bar {
+    flex-wrap: wrap;
+    gap: 12px 16px;
+  }
+
+  .filter-field {
+    flex: 1 1 140px;
+  }
+
+  .filter-field input,
+  .filter-field select,
+  .filter-field.search input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .filter-total {
+    flex-basis: 100%;
+    margin-left: 0;
+    padding-bottom: 0;
+  }
+
+  .metrics-row {
+    grid-template-columns: 1fr;
+  }
+
+  .navbar-inner {
+    flex-wrap: wrap;
+    /* 固定 64px 高度在换行后会溢出 */
+    height: auto;
+    min-height: 64px;
+    padding: 10px 0;
+    gap: 8px 16px;
+  }
+
+  .kline-chart {
+    height: 320px;
+  }
 }

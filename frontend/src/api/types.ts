@@ -8,6 +8,8 @@ export interface Stats {
   stockAnalyzedCnt: number;
   etfAnalyzedCnt: number;
   analyzedTimes: number;
+  /** 全库最新交易日（顶栏“数据日期”） */
+  lastTradeDate: string | null;
 }
 
 export interface AnalysisSummary {

@@ -35,8 +35,17 @@ import {
   analyze,
   getJob,
 } from '../api';
+import { ApiError } from '../api/client';
 
-const stats = { stockCnt: 5348, etfCnt: 624, analyzedCnt: 4832, analyzedTimes: 9000 };
+const stats = {
+  stockCnt: 5348,
+  etfCnt: 624,
+  analyzedCnt: 5300,
+  stockAnalyzedCnt: 4832,
+  etfAnalyzedCnt: 468,
+  analyzedTimes: 9000,
+  lastTradeDate: '2026-08-13',
+};
 
 const stockItem = {
   code: 'sz.300750',
@@ -92,9 +101,9 @@ describe('HomePage', () => {
     expect(await screen.findByText('股票 / ETF 数据汇总')).toBeInTheDocument();
     expect(screen.getByText('5,348')).toBeInTheDocument();
     expect(screen.getByText('624')).toBeInTheDocument();
-    // 4832/5348 = 90.35% → 90.4%；ETF 卡按 spec 公式用同一 analyzedCnt，封顶 100%
+    // 两张卡各用自己的已分析数：4832/5348 = 90.4%，468/624 = 75.0%
     expect(screen.getByText('90.4%')).toBeInTheDocument();
-    expect(screen.getByText('100.0%')).toBeInTheDocument();
+    expect(screen.getByText('75.0%')).toBeInTheDocument();
   });
 
   it('接口失败时展示错误与重试', async () => {
@@ -131,6 +140,44 @@ describe('StocksPage', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText(/股票列表 · 4,832 已分析/)).toBeInTheDocument();
+  });
+
+  it('状态筛选下推到后端（analysisStatus），而非只过滤当前页', async () => {
+    render(
+      <MemoryRouter>
+        <StocksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('宁德时代');
+    vi.mocked(getStocks).mockClear();
+
+    const statusSelect = screen.getByLabelText('状态');
+    fireEvent.change(statusSelect, { target: { value: 'pending' } });
+
+    await waitFor(() =>
+      expect(getStocks).toHaveBeenCalledWith(
+        expect.objectContaining({ analysisStatus: 'pending', page: 1 }),
+      ),
+    );
+  });
+
+  it('切换下拉不会重置正在输入的搜索词', async () => {
+    render(
+      <MemoryRouter>
+        <StocksPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('宁德时代');
+
+    const search = screen.getByLabelText('搜索') as HTMLInputElement;
+    fireEvent.change(search, { target: { value: '宁德' } });
+    // 防抖未结束时切换排序下拉
+    fireEvent.change(screen.getByLabelText('排序'), { target: { value: 'lastClose' } });
+
+    expect(search.value).toBe('宁德');
+    await waitFor(() =>
+      expect(getStocks).toHaveBeenCalledWith(expect.objectContaining({ keyword: '宁德' })),
+    );
   });
 });
 
@@ -327,6 +374,63 @@ describe('DetailPage', () => {
     // 卸载后不应再产生新的 getJob 调用
     expect(vi.mocked(getJob).mock.calls.length).toBe(callsAfterFirst);
     vi.useRealTimers();
+  });
+
+  it('轮询超时后停止并提示（不会永远停在“分析中…”）', async () => {
+    vi.useFakeTimers();
+    vi.mocked(getStockDetail).mockResolvedValue(detail);
+    vi.mocked(getStockAnalysis)
+      .mockClear()
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.mocked(getKline).mockResolvedValue([]);
+    vi.mocked(analyze).mockResolvedValue({ accepted: true, jobId: 'job-stuck' });
+    // 后端任务卡死：永远 running
+    vi.mocked(getJob).mockResolvedValue({ jobId: 'job-stuck', status: 'running', result: null });
+
+    render(
+      <MemoryRouter initialEntries={['/stocks/sh.600519']}>
+        <Routes>
+          <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.click(screen.getByText('开始分析'));
+    // 推进超过 3 分钟的轮询上限
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * 60 * 1000 + 2000);
+    });
+
+    expect(screen.getByText('分析超时未完成，请稍后刷新查看结果')).toBeInTheDocument();
+    expect(screen.getByText('开始分析')).toBeInTheDocument(); // 按钮已复原
+    vi.useRealTimers();
+  });
+
+  it('job 404 按状态码识别（错误文案已被 client 归一化为中文）', async () => {
+    vi.mocked(getStockDetail).mockResolvedValue(detail);
+    vi.mocked(getStockAnalysis)
+      .mockClear()
+      .mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.mocked(getKline).mockResolvedValue([]);
+    vi.mocked(analyze).mockResolvedValue({ accepted: true, jobId: 'job-gone' });
+    vi.mocked(getJob).mockRejectedValue(new ApiError('资源不存在', 404));
+
+    render(
+      <MemoryRouter initialEntries={['/stocks/sh.600519']}>
+        <Routes>
+          <Route path="/stocks/:code" element={<DetailPage kind="stock" />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('暂无分析结果')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('开始分析'));
+    expect(
+      await screen.findByText('分析任务不存在或已失效，请重新触发分析'),
+    ).toBeInTheDocument();
   });
 
   it('404 时展示错误信息', async () => {

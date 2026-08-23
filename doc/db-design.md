@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS stock_info (
 );
 ```
 
-> **市场区分**：`code` 为 6 位纯数字，`market` 由号段推断：股票 `60/68` → SH、`00/30` → SZ；ETF `51/56/58` → SH、`15/16` → SZ。
+> **市场区分**：`code` 为 6 位纯数字，`market` 由号段推断：股票 `60/68` → SH、`00/30` → SZ；ETF `51/52/53/55/56/58` → SH、`15/16` → SZ。
 >
 > **字段来源**：
 > - **腾讯全市场行情（`--update-stock-list`，一次拉全市场）**：`code_name`、`last_trade_date`、`last_close`、`last_pct_chg`、`last_amount`（万→元）、`pe_ttm`、`total_market_cap`（亿→元）。

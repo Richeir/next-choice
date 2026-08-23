@@ -385,8 +385,8 @@ def _kline_fetch_loop(conn, kind, table, freqs, adjusts, start, end, force,
       _INC_PAD_DAYS（保证周/月重采样周期完整）；退市（status='0'）跳过；
     - 前复权（adj='2'）即使增量也从 --start 全量重刷：qfq 序列除权后
       整段平移，末几天增量会混用复权基准；不复权增量安全；
-    - 抓取起点向前扩展窗口（见 _fetch_one_kline）以补全首行
-      preclose/pctChg，周/月写入前清理本轮覆盖周期的旧行；
+    - 抓取起点向前扩展窗口（见 _fetch_code_klines / _pad_start）以补全
+      首行 preclose/pctChg，周/月写入前清理本轮覆盖周期的旧行；
     - 标记：全量需三档全集成功；增量只需本轮应更频率全部成功；
     - 每只抓完即提交；单只失败记 warning 不中断。
     """

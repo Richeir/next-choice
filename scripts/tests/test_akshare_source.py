@@ -170,10 +170,11 @@ class TestKlineNormalize:
                                max_retries=0) is None
 
     def test_etf_kline_filters_dates(self, monkeypatch):
+        # 新浪 ETF 接口无 prevclose 列，preclose 回退为上一根 close
         raw = pd.DataFrame([
-            ("2023-12-29", 2.99, 3.0, 3.1, 2.9, 3.0, 500, 1500, 0, 0),
-            ("2024-01-02", 3.0, 3.0, 3.2, 2.95, 3.1, 600, 1860, 0, 0),
-        ], columns=["date", "prevclose", "open", "high", "low", "close",
+            ("2023-12-29", 2.99, 3.0, 2.9, 3.0, 500, 1500, 0, 0),
+            ("2024-01-02", 3.0, 3.1, 2.95, 3.1, 600, 1860, 0, 0),
+        ], columns=["date", "open", "high", "low", "close",
                     "volume", "amount", "postVol", "postAmt"])
         monkeypatch.setattr(src.ak, "fund_etf_hist_sina", lambda symbol: raw)
         df = src.etf_kline("510050", "2024-01-01", "2024-01-31")

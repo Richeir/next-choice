@@ -87,7 +87,7 @@ def _normalize_daily(df, turn_col=None, prevclose_col=None):
     df = df.sort_values("date").reset_index(drop=True)
     for c in ("open", "high", "low", "close", "volume", "amount"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    if prevclose_col:
+    if prevclose_col and prevclose_col in df.columns:
         df["preclose"] = pd.to_numeric(df[prevclose_col], errors="coerce")
     else:
         df["preclose"] = df["close"].shift(1)

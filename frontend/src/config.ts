@@ -24,4 +24,4 @@ export const IS_TAURI =
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 /** API 基址：桌面端直连 sidecar 的本地服务，浏览器端走 Vite proxy（/api）。 */
-export const API_BASE_URL = IS_TAURI ? 'http://localhost:3100' : '/api';
+export const API_BASE_URL = IS_TAURI ? 'http://localhost:3100/api' : '/api';

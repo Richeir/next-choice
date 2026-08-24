@@ -14,6 +14,7 @@
 | [llm-analysis.md](llm-analysis.md) | LLM 分析设计：提示词模板 + 输出 schema | 新 |
 | [backend/modules.md](backend/modules.md) | Nest.js 模块划分与数据访问层 | 新 |
 | [frontend/pages.md](frontend/pages.md) | React 前端页面设计 | 新 |
+| [desktop.md](desktop.md) | Tauri 2 桌面应用：架构、开发模式、sidecar 生命周期、打包发布 | 新 |
 
 ## 阅读顺序建议
 

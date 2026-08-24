@@ -19,6 +19,7 @@ next-choice/
 ├── frontend/         # React + Vite + TS 前端
 ├── backend/          # Nest.js + TS + better-sqlite3 后端
 ├── scripts/          # Python 采集脚本（Akshare → SQLite）
+├── desktop/          # Tauri 2 桌面壳（查看器，详见 doc/desktop.md）
 ├── backend/database/schema.sql   # SQLite schema 唯一来源
 ├── data/             # SQLite 数据库文件（默认 market.db，被 git 忽略）
 ├── doc/              # 设计文档（架构、API、DB、LLM 等）
@@ -109,7 +110,7 @@ npx --prefix frontend tauri build
 ```
 
 - 桌面端通过「数据源」按钮选择 SQLite 数据库，路径持久化在应用配置目录（更换后需重启生效）。
-- 架构、sidecar 生命周期、打包注意事项与已知限制见 [`doc/desktop.md`](doc/desktop.md)。
+- 架构、开发模式（含 CORS 行为）、sidecar 生命周期、打包发布与已知限制均见 [`doc/desktop.md`](doc/desktop.md)——桌面端说明的单一维护点。
 
 ## 主要接口（后端）
 

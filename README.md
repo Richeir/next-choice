@@ -96,21 +96,6 @@ npm run dev            # http://localhost:5173
 
 前端 `vite.config.ts` 已将 `/api` 代理到 `http://localhost:3100`，保持默认即可联通后端。
 
-## 桌面应用（Tauri）
-
-同一套前后端代码还封装为 Tauri 2 桌面应用（macOS / Windows）。桌面端是**查看器**：不新增采集功能、不修改 Python 脚本行为；前端在桌面环境走 HashRouter，后端以 sidecar 单文件随应用启动、直连 `http://localhost:3100/api`，浏览器端用法不变。
-
-```bash
-cd backend && npm run build:sidecar   # 首次 / 后端改动后：打包后端为 pkg sidecar
-npx --prefix frontend tauri dev       # 桌面开发模式（自动拉起 Vite + sidecar）
-
-# 打包分发
-npx --prefix frontend tauri build
-```
-
-- 桌面端通过「数据源」按钮选择 SQLite 数据库，路径持久化在应用配置目录（更换后需重启生效）。
-- 架构、sidecar 生命周期、打包注意事项与已知限制见 [`doc/desktop.md`](doc/desktop.md)。
-
 ## 主要接口（后端）
 
 | 方法 | 路径 | 说明 |
@@ -185,7 +170,6 @@ npm test
 - 后端：[`backend/README.md`](backend/README.md)
 - 前端：[`frontend/README.md`](frontend/README.md)
 - 采集脚本：[`scripts/README.md`](scripts/README.md)
-- 桌面应用：[`doc/desktop.md`](doc/desktop.md)
 
 ## 约定
 

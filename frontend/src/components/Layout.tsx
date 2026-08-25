@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { BANNER_TEXT, FALLBACK_DATA_DATE } from '../config';
 import { getStats } from '../api';
-import DbPicker from './DbPicker';
 
 function useDataDate(): string {
   const [date, setDate] = useState<string>(FALLBACK_DATA_DATE);
@@ -52,7 +51,6 @@ export default function Layout({ children }: { children: ReactNode }) {
               ETF
             </NavLink>
           </nav>
-          <DbPicker />
           <div className="data-date">
             <span className="dot" />
             <span>数据日期</span>

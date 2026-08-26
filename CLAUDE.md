@@ -43,6 +43,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 运行与测试命令
 
+根目录统一脚本（Node 部分，首次需 `npm install && npm run install:all`）：
+
+```bash
+npm run dev        # 并行启动 backend(:3100) 与 frontend(:5173)
+npm run build      # 先 frontend 后 backend 构建
+npm run start      # 单进程生产模式：托管 frontend/dist 与 /api（未构建则纯 API）
+npm test           # backend jest + frontend vitest（Python 用例仍走 pytest）
+```
+
 数据采集脚本（Python，首次需 `python3 -m venv scripts/.venv && scripts/.venv/bin/pip install -r scripts/requirements.txt`）：
 
 ```bash

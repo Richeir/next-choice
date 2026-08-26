@@ -23,6 +23,8 @@ npm run build && npm run start:prod
 
 服务默认监听 `http://localhost:3100`，全局前缀 `/api`，默认连接仓库根 `data/market.db`（可用 `DB_PATH` 覆盖，`PORT` 覆盖端口）。
 
+> 单进程部署：仓库内已构建 `frontend/dist` 时，`start:prod` 会同进程托管前端页面（非 `/api` 的无扩展名 GET 回退到 `index.html`），单端口即可访问完整应用；未构建时自动退化为纯 API 服务。
+
 ## 测试
 
 ```bash

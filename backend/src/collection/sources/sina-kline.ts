@@ -102,6 +102,8 @@ export function parseQfqFactors(text: string): QfqFactor[] {
 /**
  * 前复权：price / factor（对齐 akshare qfq 分支）。
  * 早于首个除权日的 bar 无因子，按 dropna 语义丢弃；价格保留两位小数。
+ * 注意：JS Math.round 为四舍五入，numpy/pandas 为银行家舍入，
+ * 恰好落在 x.xx5 边界时与 Python 输出可能有 ±0.01 级别的理论差异。
  */
 export function applyQfqFactors(
   bars: readonly DecodedBar[],
@@ -129,14 +131,14 @@ export function applyQfqFactors(
   return out;
 }
 
+// 单次抓取+解码；重试统一由公开入口的 withRetry 承担，
+// 避免嵌套重试把退避时长乘法式放大。
 async function fetchDecodedBars(
   symbol: string,
   opts: SinaKlineOptions,
 ): Promise<DecodedBar[]> {
-  return withRetry(async () => {
-    const text = await fetchText(klcUrl(symbol), { fetchImpl: opts.fetchImpl });
-    return decodeSinaKlines(text); // EmptyDataError 可重试
-  }, opts.retry);
+  const text = await fetchText(klcUrl(symbol), { fetchImpl: opts.fetchImpl });
+  return decodeSinaKlines(text); // EmptyDataError 可重试
 }
 
 /** 股票日 K（新浪源）。adjust 仅支持 '' 与 'qfq'。 */
@@ -157,13 +159,13 @@ export async function stockDaily(
       const text = await fetchText(qfqUrl(symbol), { fetchImpl: opts.fetchImpl });
       bars = applyQfqFactors(bars, parseQfqFactors(text));
     }
-    const entries = await withRetry(async () => {
-      const raw = await fetchText(amountUrl(symbol), { fetchImpl: opts.fetchImpl });
-      return parseAmountJsonp(raw).map((e) => ({
-        date: e.date,
-        shares: e.wanShares * 1e4,
-      }));
-    }, opts.retry);
+    const rawAmount = await fetchText(amountUrl(symbol), {
+      fetchImpl: opts.fetchImpl,
+    });
+    const entries = parseAmountJsonp(rawAmount).map((e) => ({
+      date: e.date,
+      shares: e.wanShares * 1e4,
+    }));
     const rows = normalizeDaily(bars, { turnAt: shareResolver(entries) });
     return filterByDate(rows, opts.start, opts.end);
   }, opts.retry);

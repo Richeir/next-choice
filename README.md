@@ -44,7 +44,16 @@ next-choice/
 
 - **Node.js** ≥ 20
 - **Python** ≥ 3.11
-- 推荐同时启动两个终端：一个跑后端、一个跑前端
+- 推荐用仓库根目录一键脚本同时启动前后端（见下），无需开两个终端
+
+> **一键开发（推荐）**：在仓库根目录执行
+>
+> ```bash
+> npm install && npm run install:all   # 根工具链（concurrently）+ 前后端依赖
+> npm run dev                          # 并行启动后端(:3100)与前端(:5173)
+> ```
+>
+> 其他根目录脚本：`npm run build`（先前端后后端）、`npm run test`（jest + vitest）、`npm run start`（单进程生产模式）。
 
 ### 1. 拉取并初始化数据库
 
@@ -85,6 +94,7 @@ npm run start:dev      # 开发模式（热重载）
 - 默认监听 `http://localhost:3100`，全局前缀 `/api`
 - 数据库路径：仓库根 `data/market.db`（可用环境变量 `DB_PATH` 覆盖）
 - 端口：`PORT` 环境变量覆盖
+- **单进程部署**：根目录 `npm run build && npm run start`，后端同端口(:3100)托管前端页面与 `/api`（浏览器直接访问即可）；`frontend/dist` 不存在时自动退化为纯 API 服务
 
 ### 3. 启动前端
 
@@ -140,6 +150,9 @@ npm run dev            # http://localhost:5173
 ## 测试
 
 ```bash
+# 根目录：后端 jest + 前端 vitest 一键执行（Python 用例仍走 pytest）
+npm test
+
 # Python：单元 + E2E（E2E 会真实连接 Akshare 数据源）
 cd scripts && source .venv/bin/activate
 python -m pytest tests -q -m "not e2e"   # 仅单元

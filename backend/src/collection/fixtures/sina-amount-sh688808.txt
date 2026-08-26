@@ -1,0 +1,2 @@
+/*<script>location.href='//sina.com';</script>*/
+var KKE_ShareAmount_sh688808=([{"date":"2026-04-24","amount":1929.6144}]);

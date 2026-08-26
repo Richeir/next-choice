@@ -81,6 +81,12 @@ python scripts/fetch_data.py \
 
 > 参数与回溯窗口约定见 [`scripts/README.md`](scripts/README.md)。
 > 默认数据落地路径：`data/market.db`（在 `.gitignore` 中，不会入库）。
+>
+> **雪球 token（issue #55）**：akshare 内置 `xq_a_token` 已过期，
+> `--fetch-stock-info` / `--fetch-etf-info` 需先配置环境变量
+> `XQ_TOKEN`（浏览器登录 xueqiu.com 后从 cookie 拷贝），否则这两个
+> 命令会全部失败；K 线抓取不受影响。详见
+> [`doc/akshare-api.md`](doc/akshare-api.md)。
 
 ### 2. 启动后端
 

@@ -73,6 +73,22 @@ cd scripts
 日志通过 `logging.basicConfig` 输出到 stderr，级别可用环境变量
 `LOG_LEVEL`（默认 `INFO`）调整。
 
+## 环境变量
+
+- `LOG_LEVEL`：日志级别，默认 `INFO`。
+- `XQ_TOKEN`：雪球 `xq_a_token`（issue #55）。akshare 内置 token 已过期
+  （`error 400016`），不配置则 `--fetch-stock-info` / `--fetch-etf-info`
+  的雪球调用全部失败（K 线抓取不受影响）。获取：浏览器登录 xueqiu.com，
+  从 DevTools -> Application -> Cookies 拷贝 `xq_a_token`：
+
+  ```bash
+  export XQ_TOKEN=<拷贝的值>
+  .venv/bin/python fetch_data.py --db ../data/market.db --fetch-stock-info --limit 10
+  ```
+
+  未配置时脚本照常运行，但会在首次雪球失败时提示一次；token 过期后重新
+  拷贝即可。
+
 ## 请求次数
 
 周/月 K 本就由日 K 本地重采样得到，因此 **每个 (证券, 复权档) 只请求一次

@@ -6,6 +6,7 @@
 """
 import json
 import logging
+import os
 import random
 import time
 
@@ -205,13 +206,39 @@ def fund_scale_map(max_retries=3):
     return out
 
 
+def xq_token():
+    """XQ_TOKEN 环境变量 -> 雪球 xq_a_token；未配置或空白返回 None。
+
+    akshare 内置 token 已过期（2026-08 实测，error 400016），需从浏览器
+    登录雪球后拷贝有效 cookie 里的 xq_a_token 注入，--fetch-stock-info /
+    --fetch-etf-info 才能工作。"""
+    tok = os.environ.get("XQ_TOKEN", "").strip()
+    return tok or None
+
+
+_token_hint_shown = False
+
+
+def _xq_fetch_failed(code, e):
+    """记录雪球调用失败；首次失败时附带一次 token 配置提示，避免刷屏。"""
+    global _token_hint_shown
+    hint = ""
+    if not _token_hint_shown:
+        _token_hint_shown = True
+        hint = ("（akshare 内置 xq_a_token 已失效：请从浏览器登录雪球后"
+                "将 cookie 里的 xq_a_token 写入环境变量 XQ_TOKEN）"
+                if xq_token() is None
+                else "（已注入 XQ_TOKEN，若持续 400016 说明该 token 也已过期）")
+    log.warning("xq fetch %s failed: %s%s", code, e, hint)
+
+
 def _xq_kv(fetch_fn, code, max_retries):
     """雪球 item/value 两列 DataFrame -> dict。失败返回 None。"""
     try:
         df = fetch_with_retry(fetch_fn, symbol=to_xq_code(code),
-                              max_retries=max_retries)
+                              token=xq_token(), max_retries=max_retries)
     except Exception as e:
-        log.warning("xq fetch %s failed: %s", code, e)
+        _xq_fetch_failed(code, e)
         return None
     return dict(zip(df["item"], df["value"]))
 

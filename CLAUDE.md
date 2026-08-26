@@ -90,7 +90,7 @@ npm run build          # tsc -b && vite build
 - **后端分层**（`backend/src/`）：`database.service.ts` 持有 better-sqlite3 连接；`modules/*` 每域一组 controller/service/repository；`jobs/job-manager.service.ts` 管理异步分析任务（analyze 返回 jobId，前端轮询）；`common/scoring.ts` 纯技术面评分；`common/mapper.ts` 做行→DTO 映射。
 - **分析双模式**：无 `LLM_API_KEY` 时仅技术面评分（开箱即用）；配置后经 `llm.service.ts` 调 OpenAI 兼容接口，提示词模板可由 `GET/PUT /api/config/analysis` 在线覆盖并落库（DB 优先于文件）。
 - **前端**（`frontend/src/`）：页面在 `pages/`，列表/筛选/分页通用逻辑收敛在 `components/SecurityListPage.tsx` + `hooks/useListPage.ts`，API 封装在 `api/client.ts`，类型在 `api/types.ts`。
-- **环境变量**：`DB_PATH`（覆盖数据库路径）、`PORT`（后端端口）、`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`（LLM 分析，见 `.env.example`）。
+- **环境变量**：`DB_PATH`（覆盖数据库路径）、`PORT`（后端端口）、`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`（LLM 分析，见 `.env.example`）、`XQ_TOKEN`（雪球 `xq_a_token` 注入，采集脚本 `--fetch-*-info` 依赖，见 issue #55）。
 
 ## 文档索引
 

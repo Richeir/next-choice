@@ -231,6 +231,12 @@ class TestEtfMaps:
 
 
 class TestStockInfoXq:
+    @pytest.fixture(autouse=True)
+    def _reset_token_state(self, monkeypatch):
+        """隔离 XQ_TOKEN 环境与一次性提示标记。"""
+        monkeypatch.delenv("XQ_TOKEN", raising=False)
+        monkeypatch.setattr(src, "_token_hint_shown", False)
+
     def test_basic(self, monkeypatch):
         raw = _kv_df([
             ("org_name_cn", "上海浦东发展银行股份有限公司"),
@@ -238,7 +244,7 @@ class TestStockInfoXq:
             ("affiliate_industry", {"ind_code": "BK0055", "ind_name": "银行"}),
         ])
         monkeypatch.setattr(src.ak, "stock_individual_basic_info_xq",
-                            lambda symbol: raw)
+                            lambda symbol, token=None: raw)
         info = src.stock_basic("600000")
         assert info == {"full_name": "上海浦东发展银行股份有限公司",
                         "industry": "银行", "ipo_date": "1999-11-10"}
@@ -247,7 +253,7 @@ class TestStockInfoXq:
         raw = _kv_df([("市净率", 0.5), ("52周最高", 13.6), ("52周最低", 8.1),
                       ("资产净值/总市值", 3.01e11)])
         monkeypatch.setattr(src.ak, "stock_individual_spot_xq",
-                            lambda symbol: raw)
+                            lambda symbol, token=None: raw)
         assert src.stock_quote("600000") == {
             "pb": 0.5, "high_52w": 13.6, "low_52w": 8.1,
             "total_market_cap": 3.01e11}
@@ -257,13 +263,73 @@ class TestStockInfoXq:
         raw = _kv_df([("市净率", 0.5), ("52周最高", "-"), ("52周最低", "--"),
                       ("资产净值/总市值", 3.01e11)])
         monkeypatch.setattr(src.ak, "stock_individual_spot_xq",
-                            lambda symbol: raw)
+                            lambda symbol, token=None: raw)
         assert src.stock_quote("600000") == {
             "pb": 0.5, "high_52w": None, "low_52w": None,
             "total_market_cap": 3.01e11}
 
     def test_basic_failure_returns_none(self, monkeypatch):
-        def boom(symbol):
+        def boom(symbol, token=None):
             raise requests.exceptions.ConnectionError("boom")
         monkeypatch.setattr(src.ak, "stock_individual_basic_info_xq", boom)
         assert src.stock_basic("600000", max_retries=0) is None
+
+
+class TestXqToken:
+    @pytest.fixture(autouse=True)
+    def _reset_token_state(self, monkeypatch):
+        monkeypatch.delenv("XQ_TOKEN", raising=False)
+        monkeypatch.setattr(src, "_token_hint_shown", False)
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("abc123", "abc123"), ("  abc123  ", "abc123"),
+        ("", None), ("   ", None),
+    ])
+    def test_xq_token_reads_env(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("XQ_TOKEN", raw)
+        assert src.xq_token() == expected
+
+    def test_xq_token_unset_returns_none(self):
+        assert src.xq_token() is None
+
+    def test_token_injected_into_akshare_call(self, monkeypatch):
+        """配置 XQ_TOKEN 后必须原样传给 akshare 的 token 参数。"""
+        seen = {}
+
+        def fake(symbol, token=None):
+            seen["symbol"], seen["token"] = symbol, token
+            return _kv_df([("市净率", 0.5)])
+
+        monkeypatch.setenv("XQ_TOKEN", "tok-from-browser")
+        monkeypatch.setattr(src.ak, "stock_individual_spot_xq", fake)
+        src.stock_quote("600000")
+        assert seen == {"symbol": "SH600000", "token": "tok-from-browser"}
+
+    def test_no_env_passes_none_fallback(self, monkeypatch):
+        """未配置时 token=None，akshare 回退内置 token（行为不变）。"""
+        seen = {}
+        monkeypatch.setattr(
+            src.ak, "stock_individual_basic_info_xq",
+            lambda symbol, token=None: seen.update(symbol=symbol,
+                                                   token=token) or _kv_df([]))
+        src.stock_basic("600000")
+        assert seen == {"symbol": "SH600000", "token": None}
+
+    def test_failure_hint_shown_once_without_token(self, monkeypatch, caplog):
+        def boom(symbol, token=None):
+            raise RuntimeError("400016 请重新登录")
+        monkeypatch.setattr(src.ak, "stock_individual_spot_xq", boom)
+        with caplog.at_level("WARNING"):
+            assert src.stock_quote("600000") is None
+            assert src.stock_quote("600001") is None
+        assert caplog.text.count("XQ_TOKEN") == 1
+
+    def test_failure_with_token_hint_mentions_expiry(self, monkeypatch, caplog):
+        monkeypatch.setenv("XQ_TOKEN", "stale-token")
+
+        def boom(symbol, token=None):
+            raise RuntimeError("400016 请重新登录")
+        monkeypatch.setattr(src.ak, "stock_individual_spot_xq", boom)
+        with caplog.at_level("WARNING"):
+            assert src.stock_quote("600000") is None
+        assert "过期" in caplog.text

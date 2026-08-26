@@ -22,6 +22,14 @@
 > 对场内 ETF 返回 `该基金暂不销售`（2026-08-22 实测）；故 ETF 信息补齐
 > 用雪球 quote 接口（见上表）。
 
+> **雪球接口需要有效 `xq_a_token`**（issue #55，2026-08-26 实测）：akshare
+> 内置 token 已过期（`error 400016 请重新登录`，Python 直调同样失败），
+> `--fetch-stock-info` / `--fetch-etf-info` 依赖的两个雪球接口会全部失败。
+> 处理：浏览器登录雪球后，从 cookie 拷贝 `xq_a_token` 写入环境变量
+> `XQ_TOKEN` 再运行脚本（`akshare_source.xq_token()` 会注入 akshare 的
+> `token=` 参数）；未配置时回退内置 token 并在首次失败时提示一次。
+> token 有生命周期，过期后重复上述拷贝即可。
+
 ## 2. 代码格式约定
 
 | 场景 | 格式 | 示例 |
@@ -42,6 +50,7 @@
 2. **新浪不支持 ETF 复权**：`etf_kline_*` 仅 `adjustflag='3'`。
 3. **雪球个股接口需逐只调用**（~5400 只 × 2 接口）：全量补齐预计 1-2
    小时，`--fetch-stock-info` 只处理 `full_name` 为空的增量，建议每周跑一次。
+   且需有效 `xq_a_token`（见第 1 节说明，配置 `XQ_TOKEN` 环境变量）。
 4. **`tradestatus` 恒为 `'1'`、`isST` 恒为 `'0'`**：新数据源不提供交易状态
    与 ST 标记。
 5. **`etf_kline_daily` 估值列（`peTTM` 等）恒为 `NULL`**：新数据源不提供。

@@ -87,6 +87,7 @@ npm run build          # tsc -b && vite build
 - **SQLite schema 单一来源**：`backend/database/schema.sql`（11 张表），Python（`scripts/db.py`）与 Nest.js 后端共用；默认库 `data/market.db`（gitignored，不入库）。
 - **K 线幂等**：主键 `UNIQUE(code, date, adjustflag)`，脚本可重复运行覆盖；周/月 K 由日 K 本地重采样（`scripts/akshare_source.py::resample_kline`），不单独抓取。新浪 ETF 源仅不复权，ETF K 线 `--adjust` 被强制为 3。
 - **采集脚本分层**（`scripts/`）：`akshare_source.py` 管抓取/重试退避/列标准化（不感知 SQLite），`db.py` 管读写，`fetch_data.py` 是 CLI 入口。`_normalize_daily` 会把各源原始列统一为 `KLINE_COLS`。
+- **TS 采集模块**（`backend/src/collection/`，issue #55 步骤 2）：Python 采集层的平移，框架无关纯库（不感知 SQLite/Nest），A1/A2 路线决策前两侧皆可挂载；含新浪 `klc_kl.js` 解密函数的回归用例（fixture 经 akshare 输出交叉验证）。
 - **后端分层**（`backend/src/`）：`database.service.ts` 持有 better-sqlite3 连接；`modules/*` 每域一组 controller/service/repository；`jobs/job-manager.service.ts` 管理异步分析任务（analyze 返回 jobId，前端轮询）；`common/scoring.ts` 纯技术面评分；`common/mapper.ts` 做行→DTO 映射。
 - **分析双模式**：无 `LLM_API_KEY` 时仅技术面评分（开箱即用）；配置后经 `llm.service.ts` 调 OpenAI 兼容接口，提示词模板可由 `GET/PUT /api/config/analysis` 在线覆盖并落库（DB 优先于文件）。
 - **前端**（`frontend/src/`）：页面在 `pages/`，列表/筛选/分页通用逻辑收敛在 `components/SecurityListPage.tsx` + `hooks/useListPage.ts`，API 封装在 `api/client.ts`，类型在 `api/types.ts`。
